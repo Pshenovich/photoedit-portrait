@@ -41,6 +41,26 @@ async function readJsonBody(req) {
   }
 }
 
+/** Убираем кавычки, переносы, случайный префикс Bearer — иначе получится Bearer Bearer … и Comet вернёт invalid token. */
+function normalizeApiKey(raw) {
+  if (raw == null) return "";
+  let k = String(raw).trim();
+  k = k.replace(/^["'`]+|["'`]+$/g, "");
+  k = k.replace(/^Bearer\s+/i, "").trim();
+  k = k.split(/\r?\n/)[0].trim();
+  return k;
+}
+
+function hintForCometMessage(msg) {
+  const s = typeof msg === "string" ? msg : "";
+  if (/invalid token/i.test(s)) {
+    return (
+      " Ключ: только строка из кабинета CometAPI (не ключ OpenAI). В Vercel в значении переменной не пишите слово Bearer — только сам ключ. В кабинете токену нужна безлимитная квота."
+    );
+  }
+  return "";
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -56,11 +76,13 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const key = (process.env.COMET_API_KEY || "").trim().replace(/^["']|["']$/g, "");
+  const key = normalizeApiKey(
+    process.env.COMET_API_KEY || process.env.COMETAPI_KEY || ""
+  );
   if (!key) {
     sendJson(res, 501, {
       error:
-        "COMET_API_KEY не задан. В Vercel: Settings → Environment Variables → COMET_API_KEY = ваш ключ CometAPI.",
+        "COMET_API_KEY не задан. В Vercel: Settings → Environment Variables → COMET_API_KEY (или COMETAPI_KEY) = ключ из кабинета CometAPI, без префикса Bearer.",
     });
     return;
   }
@@ -130,16 +152,18 @@ module.exports = async (req, res) => {
     }
 
     if (!upstream.ok) {
+      const errText = stringifyCometError(json);
       sendJson(res, upstream.status >= 400 ? upstream.status : 502, {
-        error: stringifyCometError(json),
+        error: errText + hintForCometMessage(errText),
         status: upstream.status,
       });
       return;
     }
 
     if (json.error) {
+      const errText = stringifyCometError(json);
       sendJson(res, 502, {
-        error: stringifyCometError(json),
+        error: errText + hintForCometMessage(errText),
         status: upstream.status,
       });
       return;
