@@ -26,39 +26,97 @@ export function getLandmarker() {
  */
 export async function ensureFaceLandmarker() {
   if (landmarker) return landmarker;
-  if (landmarkerPromise) return landmarkerPromise;
-  landmarkerPromise = (async () => {
-    const vision = await import(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
-    );
-    const { FaceLandmarker, FilesetResolver } = vision;
-    const fileset = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-    );
-    const modelAssetPath =
-      "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
-    const base = { runningMode: "IMAGE", numFaces: 1 };
+  if (landmarkerPromise) {
     try {
-      landmarker = await FaceLandmarker.createFromOptions(fileset, {
-        ...base,
-        baseOptions: { modelAssetPath, delegate: "GPU" },
-      });
-    } catch (_) {
-      try {
-        landmarker = await FaceLandmarker.createFromOptions(fileset, {
-          ...base,
-          baseOptions: { modelAssetPath, delegate: "CPU" },
-        });
-      } catch (_) {
-        landmarker = await FaceLandmarker.createFromOptions(fileset, {
-          ...base,
-          baseOptions: { modelAssetPath },
-        });
-      }
+      return await landmarkerPromise;
+    } catch {
+      landmarkerPromise = null;
     }
-    return landmarker;
+  }
+  landmarkerPromise = (async () => {
+    try {
+      const vision = await import(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
+      );
+      const { FaceLandmarker, FilesetResolver } = vision;
+      const fileset = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+      const modelAssetPath =
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+      const base = {
+        runningMode: "IMAGE",
+        numFaces: 2,
+        minFaceDetectionConfidence: 0.15,
+        minFacePresenceConfidence: 0.15,
+        outputFaceBlendshapes: false,
+        outputFacialTransformationMatrixes: false,
+      };
+
+      const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+      const isMobile = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
+
+      const tryOrder = isMobile
+        ? [{ delegate: "CPU" }, { delegate: "GPU" }, {}]
+        : [{ delegate: "GPU" }, { delegate: "CPU" }, {}];
+
+      let lastErr = null;
+      for (const del of tryOrder) {
+        try {
+          landmarker = await FaceLandmarker.createFromOptions(fileset, {
+            ...base,
+            baseOptions: { modelAssetPath, ...del },
+          });
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          landmarker = null;
+        }
+      }
+      if (!landmarker && lastErr) throw lastErr;
+      return landmarker;
+    } catch (e) {
+      landmarker = null;
+      landmarkerPromise = null;
+      throw e;
+    }
   })();
   return landmarkerPromise;
+}
+
+function pickBestFace(faces) {
+  if (!faces || faces.length === 0) return null;
+  const valid = faces.filter((lm) => lm && lm.length >= 468);
+  if (valid.length === 0) return null;
+  if (valid.length === 1) return valid[0];
+
+  let best = null;
+  let bestArea = 0;
+  for (const lm of valid) {
+    let minX = 1;
+    let minY = 1;
+    let maxX = 0;
+    let maxY = 0;
+    let any = false;
+    for (const i of [10, 152, 234, 454, 1, 33, 263]) {
+      if (!lm[i]) continue;
+      any = true;
+      const x = lm[i].x;
+      const y = lm[i].y;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    const area = any ? (maxX - minX) * (maxY - minY) : 0;
+    if (area > bestArea) {
+      bestArea = area;
+      best = lm;
+    }
+  }
+  return best || valid[0];
 }
 
 /**
@@ -67,10 +125,38 @@ export async function ensureFaceLandmarker() {
  */
 export function detectLandmarks(canvas) {
   if (!landmarker) return null;
-  const res = landmarker.detect(canvas);
-  const lm = res.faceLandmarks && res.faceLandmarks[0];
-  if (!lm || lm.length < 468) return null;
-  return { landmarks: lm };
+
+  const tryDetect = (c) => {
+    const res = landmarker.detect(c);
+    const faces = res.faceLandmarks;
+    const lm = pickBestFace(faces);
+    return lm ? { landmarks: lm } : null;
+  };
+
+  let det = tryDetect(canvas);
+  if (det) return det;
+
+  const W = canvas.width;
+  const H = canvas.height;
+  if (W < 32 || H < 32) return null;
+
+  const scales = [1.75, 2.25, 1.35, 0.85];
+  for (const sc of scales) {
+    const tw = Math.round(Math.min(1920, Math.max(96, W * sc)));
+    const th = Math.round(Math.min(1920, Math.max(96, H * sc)));
+    if (tw === W && th === H) continue;
+    const mc = document.createElement("canvas");
+    mc.width = tw;
+    mc.height = th;
+    const mx = mc.getContext("2d");
+    mx.imageSmoothingEnabled = true;
+    mx.imageSmoothingQuality = "high";
+    mx.drawImage(canvas, 0, 0, tw, th);
+    det = tryDetect(mc);
+    if (det) return det;
+  }
+
+  return null;
 }
 
 export function lmPx(lm, i, w, h) {

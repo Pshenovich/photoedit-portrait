@@ -254,15 +254,17 @@ async function downloadEditedPhoto() {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-function fitImageToCanvas(img) {
-  let w = img.naturalWidth;
-  let h = img.naturalHeight;
+function fitImageToCanvas(src) {
+  const w0 = "naturalWidth" in src && src.naturalWidth ? src.naturalWidth : src.width;
+  const h0 = "naturalHeight" in src && src.naturalHeight ? src.naturalHeight : src.height;
+  let w = w0;
+  let h = h0;
   const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
   w = Math.round(w * scale);
   h = Math.round(h * scale);
   canvas.width = w;
   canvas.height = h;
-  ctx.drawImage(img, 0, 0, w, h);
+  ctx.drawImage(src, 0, 0, w, h);
   originalSnapshot = ctx.getImageData(0, 0, w, h);
   undoStack.length = 0;
   undoBtn.disabled = true;
@@ -284,7 +286,12 @@ async function analyzeFace() {
   setStatus("Ищем лицо и строим маски…");
   try {
     await ensureFaceLandmarker();
-    const det = detectLandmarks(canvas);
+    await new Promise((r) => setTimeout(r, 80));
+    let det = detectLandmarks(canvas);
+    if (!det) {
+      await new Promise((r) => setTimeout(r, 120));
+      det = detectLandmarks(canvas);
+    }
     if (det && det.landmarks) {
       faceLandmarks = det.landmarks;
       const w = canvas.width;
@@ -295,7 +302,9 @@ async function analyzeFace() {
       lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
       setStatus("Лицо найдено: «Авто» и кисть «Кожа» только по коже лица.");
     } else {
-      setStatus("Лицо не найдено — «Авто кожа» по всему кадру, кисть по всему фото.");
+      setStatus(
+        "Лицо не найдено. Попробуйте фронтальный портрет, лицо крупнее в кадре, ровный свет; на iPhone лучше JPEG из «Фото»."
+      );
       lipMaskAlpha = null;
     }
   } catch (e) {
@@ -308,19 +317,48 @@ async function analyzeFace() {
   }
 }
 
-fileInput.addEventListener("change", (e) => {
+fileInput.addEventListener("change", async (e) => {
   const f = e.target.files && e.target.files[0];
   if (!f) return;
-  const url = URL.createObjectURL(f);
-  const img = new Image();
-  img.onload = async () => {
-    URL.revokeObjectURL(url);
-    sourceImg = img;
-    fitImageToCanvas(img);
+  try {
+    let src = null;
+    if (typeof createImageBitmap === "function") {
+      try {
+        src = await createImageBitmap(f, { imageOrientation: "from-image" });
+      } catch (_) {
+        src = null;
+      }
+    }
+    if (!src) {
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = url;
+      });
+      if (img.decode) await img.decode();
+      URL.revokeObjectURL(url);
+      src = img;
+    }
+    if (src instanceof ImageBitmap) {
+      sourceImg = null;
+    } else {
+      sourceImg = src;
+    }
+    fitImageToCanvas(src);
+    if (src instanceof ImageBitmap) {
+      try {
+        src.close();
+      } catch (_) {
+        /* ignore */
+      }
+    }
     await analyzeFace();
-  };
-  img.onerror = () => URL.revokeObjectURL(url);
-  img.src = url;
+  } catch (err) {
+    console.warn(err);
+    setStatus("Не удалось открыть файл. Попробуйте JPEG или PNG.");
+  }
   e.target.value = "";
 });
 
