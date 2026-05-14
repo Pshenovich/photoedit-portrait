@@ -1,30 +1,45 @@
 # PhotoEdit Pro
 
-Статическое веб-приложение (HTML/CSS/JS). Деплой без сборки.
+Портретный редактор в браузере (MediaPipe Face Landmarker). Статика, без сборки.
 
-## Vercel + GitHub
+## Уже развёрнуто
 
-1. Создайте репозиторий на GitHub и отправьте туда файлы проекта (этот каталог в корне репозитория).
-2. Зайдите на [vercel.com](https://vercel.com), войдите через GitHub.
-3. **Add New Project** → выберите репозиторий.
-4. Настройки по умолчанию:
-   - **Framework Preset:** Other (или «No framework»)
-   - **Root Directory:** `./` (корень)
-   - **Build Command:** оставьте пустым
-   - **Output Directory:** оставьте пустым (корень сайта = корень репо)
-5. Нажмите **Deploy**. Сайт будет доступен по адресу вида `https://<имя-проекта>.vercel.app`.
+| Где | URL |
+|-----|-----|
+| Репозиторий | https://github.com/Pshenovich/photoedit-portrait |
+| **Vercel** (основной прод) | https://photoedit-portrait.vercel.app |
+| **GitHub Pages** (зеркало) | https://pshenovich.github.io/photoedit-portrait/ |
 
-После первого деплоя каждый push в основную ветку обновляет продакшен (если включено в настройках проекта).
+Оба варианта отдают тот же `index.html` по HTTPS.
 
-## Локальная проверка
+## Авто-деплой Vercel из GitHub
+
+Первый выклад на Vercel с этой машины прошёл под аккаунтом Vercel **`knazorlov-6551`**, поэтому **привязка GitHub → Vercel** к репозиторию `Pshenovich/photoedit-portrait` не установилась (нет доступа этого Vercel-пользователя к чужому репо).
+
+Чтобы каждый `git push` в `main` сам обновлял прод на Vercel:
+
+1. Войдите на [vercel.com](https://vercel.com) под GitHub-аккаунтом **Pshenovich** (или добавьте Vercel GitHub App к репозиторию).
+2. **Add New Project** → импортируйте `Pshenovich/photoedit-portrait`.
+3. Preset **Other**, без build-команды, корень проекта — `/`.
+
+Либо оставьте текущий прод на `photoedit-portrait.vercel.app` и обновляйте его командой с машины, где настроен `vercel login`:
+
+```bash
+cd /path/to/PhotoEdit
+NPM_CONFIG_CACHE=/tmp/npm-cache-photoedit npx vercel@latest deploy --prod --yes --name photoedit-portrait
+```
+
+## GitHub Pages
+
+Страницы включены с ветки `main`, путь `/`. Обновление после push может занять 1–2 минуты.
+
+## Локально
 
 ```bash
 python3 -m http.server 8080
 ```
 
-Откройте `http://localhost:8080`. Для продакшена нужен HTTPS — на Vercel он уже есть.
-
 ## Заметки
 
-- Приложение подгружает MediaPipe и модель лица с CDN/облака; нужен доступ в интернет при первом открытии.
-- Камера/файлы работают только по **HTTPS** или на `localhost` (на Vercel это выполняется).
+- Первый визит тянет WASM/модель MediaPipe из сети.
+- Выбор фото с устройства — только по **HTTPS** или `localhost` (продакшен это удовлетворяет).
