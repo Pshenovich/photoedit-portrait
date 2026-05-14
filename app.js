@@ -119,21 +119,36 @@ resetBtn.addEventListener("click", () => {
 });
 
 saveBtn.addEventListener("click", () => {
-  if (!canvas.width) return;
-  canvas.toBlob(
-    (blob) => {
-      if (!blob) return;
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "photo-edit.jpg";
-      a.rel = "noopener";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    },
-    "image/jpeg",
-    0.93
-  );
+  downloadEditedPhoto();
 });
+
+async function downloadEditedPhoto() {
+  if (!canvas.width) return;
+  const blob = await new Promise((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", 0.93);
+  });
+  if (!blob) return;
+  const name = `photoedit-${new Date().toISOString().slice(0, 19).replace(/[:-]/g, "")}.jpg`;
+  const file = new File([blob], name, { type: "image/jpeg" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: "Фото", text: "Отредактированное фото" });
+      return;
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
 
 function fitImageToCanvas(img) {
   let w = img.naturalWidth;
@@ -333,6 +348,89 @@ function applyEyes(cx, cy, r) {
   stampFilteredDisk(cx, cy, r, "brightness(1.1) contrast(0.94) saturate(0.86)", 1);
 }
 
+/**
+ * Локальный «heal»: цвет из кольца вокруг точки, мягкая заливка внутри (прыщи).
+ */
+function applyHeal(cx, cy, R) {
+  const w = canvas.width;
+  const h = canvas.height;
+  if (R < 2 || !w || !h) return;
+
+  const ringHi = Math.min(R * 2.15, Math.min(w, h) * 0.2);
+  const rIn = Math.max(1.5, R * 0.4);
+  const rRingLo = rIn * 1.1;
+  const rRingHi = ringHi;
+
+  const cx0 = Math.max(0, Math.floor(cx - rRingHi - 2));
+  const cy0 = Math.max(0, Math.floor(cy - rRingHi - 2));
+  const cx1 = Math.min(w - 1, Math.ceil(cx + rRingHi + 2));
+  const cy1 = Math.min(h - 1, Math.ceil(cy + rRingHi + 2));
+  const pw = cx1 - cx0 + 1;
+  const ph = cy1 - cy0 + 1;
+  if (pw < 3 || ph < 3) return;
+
+  let img;
+  try {
+    img = ctx.getImageData(cx0, cy0, pw, ph);
+  } catch (e) {
+    console.warn("applyHeal getImageData", e);
+    return;
+  }
+  const d = img.data;
+  const pcx = cx - cx0;
+  const pcy = cy - cy0;
+
+  let sr = 0;
+  let sg = 0;
+  let sb = 0;
+  let sn = 0;
+  const collect = (lo, hi) => {
+    for (let py = 0; py < ph; py++) {
+      for (let px = 0; px < pw; px++) {
+        const dist = Math.hypot(px - pcx, py - pcy);
+        if (dist >= lo && dist <= hi) {
+          const i = (py * pw + px) * 4;
+          sr += d[i];
+          sg += d[i + 1];
+          sb += d[i + 2];
+          sn++;
+        }
+      }
+    }
+  };
+  collect(rRingLo, rRingHi);
+  if (sn < 8) {
+    sr = 0;
+    sg = 0;
+    sb = 0;
+    sn = 0;
+    collect(rIn * 1.05, rRingHi * 1.12);
+  }
+  if (sn < 1) return;
+  const ar = sr / sn;
+  const ag = sg / sn;
+  const ab = sb / sn;
+
+  for (let py = 0; py < ph; py++) {
+    for (let px = 0; px < pw; px++) {
+      const dist = Math.hypot(px - pcx, py - pcy);
+      if (dist > rIn) continue;
+      const t = 1 - dist / rIn;
+      const smooth = t * t * (3 - 2 * t);
+      let skinM = 1;
+      if (skinMaskAlpha) {
+        skinM = 0.12 + 0.88 * maskValueAt(w, h, cx0 + px, cy0 + py, skinMaskAlpha);
+      }
+      const a = smooth * skinM * 0.9;
+      const i = (py * pw + px) * 4;
+      d[i] = d[i] * (1 - a) + ar * a;
+      d[i + 1] = d[i + 1] * (1 - a) + ag * a;
+      d[i + 2] = d[i + 2] * (1 - a) + ab * a;
+    }
+  }
+  ctx.putImageData(img, cx0, cy0);
+}
+
 function applyLipLine(x0, y0, x1, y1, width, hex) {
   let m0 = 1;
   let m1 = 1;
@@ -390,6 +488,7 @@ function strokeBegin(clientX, clientY) {
     pushUndo();
     if (tool === "smooth") applySmooth(x, y, r);
     else if (tool === "eyes") applyEyes(x, y, r);
+    else if (tool === "heal") applyHeal(x, y, r);
     else if (tool === "lip") applyLipDot(x, y, r, lipColor.value);
   } catch (err) {
     console.warn("strokeBegin", err);
@@ -418,7 +517,8 @@ function strokeDrag(clientX, clientY) {
       const px = lastX + ((x - lastX) * i) / n;
       const py = lastY + ((y - lastY) * i) / n;
       if (tool === "smooth") applySmooth(px, py, r);
-      else applyEyes(px, py, r);
+      else if (tool === "eyes") applyEyes(px, py, r);
+      else if (tool === "heal") applyHeal(px, py, r);
     }
     lastX = x;
     lastY = y;

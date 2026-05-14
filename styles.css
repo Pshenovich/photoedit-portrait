@@ -164,12 +164,14 @@ body {
 
 .tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
 
 .tool {
-  flex: 1;
+  flex: 1 1 calc(50% - 4px);
+  min-width: 72px;
   padding: 12px 8px;
   border-radius: 12px;
   border: 1px solid #3a3a48;

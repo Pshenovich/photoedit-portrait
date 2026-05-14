@@ -18,13 +18,13 @@
       </label>
       <div class="top-actions">
         <button type="button" class="btn" id="undoBtn" disabled title="Отменить">↩</button>
-        <button type="button" class="btn" id="saveBtn" disabled title="Сохранить JPEG">Сохранить</button>
+        <button type="button" class="btn" id="saveBtn" disabled title="Скачать отредактированное фото (JPEG)">Скачать</button>
         <button type="button" class="btn" id="resetBtn" disabled title="Сбросить фото">Сброс</button>
       </div>
     </header>
 
     <main class="stage">
-      <p class="hint" id="hint">Выберите портретное фото. После анализа лица появятся кнопки «Авто». Два пальца — масштаб.</p>
+      <p class="hint" id="hint">Выберите фото. «Прыщи» — точечно по прыщику (лучше уменьшить кисть). «Скачать» — JPEG в галерею или через «Поделиться» на телефоне.</p>
       <p class="status" id="status" role="status" aria-live="polite"></p>
       <div class="canvas-box" id="canvasBox">
         <div class="viewport" id="viewport">
@@ -42,6 +42,7 @@
       <div class="tools" role="tablist" aria-label="Инструменты">
         <button type="button" class="tool active" data-tool="smooth" aria-pressed="true">Кожа</button>
         <button type="button" class="tool" data-tool="eyes" aria-pressed="false">Глаза</button>
+        <button type="button" class="tool" data-tool="heal" aria-pressed="false">Прыщи</button>
         <button type="button" class="tool" data-tool="lip" aria-pressed="false">Помада</button>
       </div>
       <div class="sliders">
@@ -51,7 +52,7 @@
         </label>
         <label class="slider-label">
           <span>Кисть</span>
-          <input type="range" id="brushSize" min="8" max="120" value="36" />
+          <input type="range" id="brushSize" min="4" max="120" value="22" />
         </label>
         <label class="slider-label lip-only hidden" id="lipColorWrap">
           <span>Цвет</span>
