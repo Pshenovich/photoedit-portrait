@@ -336,8 +336,13 @@ export function blurCanvasToImageData(sourceCanvas, blurPx) {
   t.width = w;
   t.height = h;
   const tc = t.getContext("2d");
-  tc.filter = `blur(${blurPx}px)`;
-  tc.drawImage(sourceCanvas, 0, 0, w, h);
+  try {
+    tc.filter = `blur(${blurPx}px)`;
+    tc.drawImage(sourceCanvas, 0, 0, w, h);
+  } catch (_) {
+    tc.filter = "none";
+    tc.drawImage(sourceCanvas, 0, 0, w, h);
+  }
   tc.filter = "none";
   return tc.getImageData(0, 0, w, h);
 }

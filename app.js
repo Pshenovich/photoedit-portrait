@@ -28,7 +28,7 @@ const autoEyesBtn = document.getElementById("autoEyesBtn");
 const autoLipsBtn = document.getElementById("autoLipsBtn");
 const viewport = document.getElementById("viewport");
 
-const MAX_EDGE = 1536;
+canvas.style.touchAction = "none";
 const UNDO_MAX = 24;
 
 let tool = "smooth";
@@ -51,10 +51,11 @@ let lipMaskCanvas = null;
 /** @type {Uint8ClampedArray | null} */
 let lipMaskAlpha = null;
 
-function setAutoEnabled(on) {
-  [autoSkinBtn, autoEyesBtn, autoLipsBtn].forEach((b) => {
-    if (b) b.disabled = !on;
-  });
+function updateAutoButtonState() {
+  const hasImg = !!(canvas && canvas.width && canvas.height);
+  if (autoSkinBtn) autoSkinBtn.disabled = !hasImg;
+  if (autoEyesBtn) autoEyesBtn.disabled = !hasImg || !faceLandmarks;
+  if (autoLipsBtn) autoLipsBtn.disabled = !hasImg || !lipMaskCanvas;
 }
 
 function setStatus(msg) {
@@ -64,11 +65,15 @@ function setStatus(msg) {
 }
 
 function pushUndo() {
-  if (!canvas.width || !canvas.height) return;
-  const snap = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  undoStack.push(snap);
-  if (undoStack.length > UNDO_MAX) undoStack.shift();
-  undoBtn.disabled = false;
+  try {
+    if (!canvas.width || !canvas.height) return;
+    const snap = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    undoStack.push(snap);
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+    undoBtn.disabled = false;
+  } catch (e) {
+    console.warn("pushUndo", e);
+  }
 }
 
 function popUndo() {
@@ -143,6 +148,7 @@ function fitImageToCanvas(img) {
   resetBtn.disabled = false;
   saveBtn.disabled = false;
   setHintVisible(false);
+  updateAutoButtonState();
 }
 
 async function analyzeFace() {
@@ -150,7 +156,7 @@ async function analyzeFace() {
   skinMaskAlpha = null;
   lipMaskCanvas = null;
   lipMaskAlpha = null;
-  setAutoEnabled(false);
+  updateAutoButtonState();
   if (!canvas.width) return;
 
   setStatus("Ищем лицо и строим маски…");
@@ -165,16 +171,17 @@ async function analyzeFace() {
       skinMaskAlpha = maskAlphaFromCanvas(skinCv);
       lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
       lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
-      setAutoEnabled(true);
       setStatus("Лицо найдено: «Авто» и кисть «Кожа» только по коже лица.");
     } else {
-      setStatus("Лицо не найдено — доступна ручная кисть по всему фото.");
+      setStatus("Лицо не найдено — «Авто кожа» по всему кадру, кисть по всему фото.");
       lipMaskAlpha = null;
     }
   } catch (e) {
     console.warn(e);
     lipMaskAlpha = null;
-    setStatus("Детектор лица недоступен (проверьте сеть). Работает ручная кисть.");
+    setStatus("Детектор лица недоступен (сеть/CORS). «Авто кожа» и кисть по всему фото.");
+  } finally {
+    updateAutoButtonState();
   }
 }
 
@@ -198,10 +205,19 @@ function getIntensity() {
   return Number(intensity.value) / 100;
 }
 
+function fullSkinMaskAlpha() {
+  const w = canvas.width;
+  const h = canvas.height;
+  const a = new Uint8ClampedArray(w * h);
+  a.fill(255);
+  return a;
+}
+
 function autoSkin() {
-  if (!canvas.width || !skinMaskAlpha) return;
+  if (!canvas.width) return;
+  const mask = skinMaskAlpha || fullSkinMaskAlpha();
   pushUndo();
-  applyAutoSkin(canvas, skinMaskAlpha, getIntensity() * 0.92, {
+  applyAutoSkin(canvas, mask, getIntensity() * 0.92, {
     fine: 4 + getIntensity() * 2,
     coarse: 11 + getIntensity() * 10,
   });
@@ -256,8 +272,14 @@ function stampFilteredDisk(cx, cy, r, filterCss, strengthMul = 1) {
   filt.width = rw;
   filt.height = rh;
   const fctx = filt.getContext("2d");
-  fctx.filter = filterCss;
-  fctx.drawImage(orig, 0, 0);
+  try {
+    fctx.filter = filterCss;
+    fctx.drawImage(orig, 0, 0);
+  } catch (_) {
+    fctx.filter = "none";
+    fctx.drawImage(orig, 0, 0);
+  }
+  fctx.filter = "none";
 
   const mask = document.createElement("canvas");
   mask.width = rw;
@@ -371,10 +393,14 @@ function handleStart(ev) {
   lastX = x;
   lastY = y;
   const r = Number(brushSize.value);
-  pushUndo();
-  if (tool === "smooth") applySmooth(x, y, r);
-  else if (tool === "eyes") applyEyes(x, y, r);
-  else if (tool === "lip") applyLipDot(x, y, r, lipColor.value);
+  try {
+    pushUndo();
+    if (tool === "smooth") applySmooth(x, y, r);
+    else if (tool === "eyes") applyEyes(x, y, r);
+    else if (tool === "lip") applyLipDot(x, y, r, lipColor.value);
+  } catch (err) {
+    console.warn("handleStart", err);
+  }
 }
 
 function handleMove(ev) {
@@ -385,25 +411,29 @@ function handleMove(ev) {
   const r = Number(brushSize.value);
   const step = Math.max(3, r * 0.32);
 
-  if (tool === "lip") {
-    const d = distance(lastX, lastY, x, y);
-    if (d < 0.8) return;
-    applyLipLine(lastX, lastY, x, y, r * 0.82, lipColor.value);
+  try {
+    if (tool === "lip") {
+      const d = distance(lastX, lastY, x, y);
+      if (d < 0.8) return;
+      applyLipLine(lastX, lastY, x, y, r * 0.82, lipColor.value);
+      lastX = x;
+      lastY = y;
+      return;
+    }
+
+    const dist = distance(lastX, lastY, x, y);
+    const n = Math.max(1, Math.ceil(dist / step));
+    for (let i = 1; i <= n; i++) {
+      const px = lastX + ((x - lastX) * i) / n;
+      const py = lastY + ((y - lastY) * i) / n;
+      if (tool === "smooth") applySmooth(px, py, r);
+      else applyEyes(px, py, r);
+    }
     lastX = x;
     lastY = y;
-    return;
+  } catch (err) {
+    console.warn("handleMove", err);
   }
-
-  const dist = distance(lastX, lastY, x, y);
-  const n = Math.max(1, Math.ceil(dist / step));
-  for (let i = 1; i <= n; i++) {
-    const px = lastX + ((x - lastX) * i) / n;
-    const py = lastY + ((y - lastY) * i) / n;
-    if (tool === "smooth") applySmooth(px, py, r);
-    else applyEyes(px, py, r);
-  }
-  lastX = x;
-  lastY = y;
 }
 
 function handleEnd(ev) {
@@ -427,13 +457,6 @@ canvas.addEventListener("pointerup", handleEnd);
 canvas.addEventListener("pointercancel", handleEnd);
 canvas.addEventListener("pointerleave", handleEnd);
 
-canvas.addEventListener(
-  "touchstart",
-  (e) => {
-    if (e.target === canvas) e.preventDefault();
-  },
-  { passive: false }
-);
 canvas.addEventListener(
   "touchmove",
   (e) => {
@@ -463,8 +486,6 @@ if (viewport) {
         const b = e.touches[1];
         pinchDist0 = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
         pinchScale0 = scale;
-        pinchCx = (a.clientX + b.clientX) / 2;
-        pinchCy = (a.clientY + b.clientY) / 2;
       }
     },
     { passive: true }
@@ -489,5 +510,5 @@ if (viewport) {
 }
 
 syncToolsUI();
-setAutoEnabled(false);
+updateAutoButtonState();
 setStatus("");
