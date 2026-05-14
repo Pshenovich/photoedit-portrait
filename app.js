@@ -230,14 +230,39 @@ function fullSkinMaskAlpha() {
   return a;
 }
 
-function autoSkin() {
+/** Если маска кожи пустая/битая — иначе «Авто кожа» визуально «ничего». */
+function effectiveSkinMaskForAuto() {
+  const w = canvas.width;
+  const h = canvas.height;
+  const n = w * h;
+  const full = fullSkinMaskAlpha();
+  if (!skinMaskAlpha || skinMaskAlpha.length !== n) return full;
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += skinMaskAlpha[i];
+  const mean = sum / (n * 255);
+  if (mean < 0.04) return full;
+  return skinMaskAlpha;
+}
+
+async function autoSkin() {
   if (!canvas.width) return;
-  const mask = skinMaskAlpha || fullSkinMaskAlpha();
-  pushUndo();
-  applyAutoSkin(canvas, mask, getIntensity() * 0.92, {
-    fine: 4 + getIntensity() * 2,
-    coarse: 11 + getIntensity() * 10,
-  });
+  setStatus("Авто кожа: обработка…");
+  await new Promise((r) => requestAnimationFrame(r));
+  const mask = effectiveSkinMaskForAuto();
+  try {
+    pushUndo();
+    applyAutoSkin(canvas, mask, getIntensity() * 0.92, {
+      fine: 4 + getIntensity() * 2,
+      coarse: 11 + getIntensity() * 10,
+    });
+    setStatus("Кожа обновлена. ↩ — отмена.");
+    setTimeout(() => {
+      if (statusEl && statusEl.textContent.includes("Кожа обновлена")) setStatus("");
+    }, 2800);
+  } catch (e) {
+    console.warn("autoSkin", e);
+    setStatus("Не удалось обработать (память/размер). Попробуйте меньшее фото.");
+  }
 }
 
 function autoEyes() {
@@ -252,7 +277,7 @@ function autoLips() {
   applyAutoLip(canvas, lipMaskCanvas, lipColor.value, getIntensity() * 0.88);
 }
 
-if (autoSkinBtn) autoSkinBtn.addEventListener("click", autoSkin);
+if (autoSkinBtn) autoSkinBtn.addEventListener("click", () => void autoSkin());
 if (autoEyesBtn) autoEyesBtn.addEventListener("click", autoEyes);
 if (autoLipsBtn) autoLipsBtn.addEventListener("click", autoLips);
 

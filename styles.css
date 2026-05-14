@@ -122,7 +122,7 @@ body {
 #view {
   display: block;
   max-width: 100%;
-  max-height: min(64vh, 600px);
+  max-height: min(52vh, 520px);
   width: auto;
   height: auto;
   touch-action: none;
@@ -153,6 +153,11 @@ body {
 }
 
 .dock {
+  flex-shrink: 0;
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   background: var(--panel);
   border-top: 1px solid #2a2a34;
   padding: 12px 16px calc(12px + var(--safe));
@@ -164,21 +169,35 @@ body {
 
 .tools {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   margin-bottom: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.tools::-webkit-scrollbar {
+  height: 5px;
+}
+
+.tools::-webkit-scrollbar-thumb {
+  background: #3a3a55;
+  border-radius: 4px;
 }
 
 .tool {
-  flex: 1 1 calc(50% - 4px);
-  min-width: 72px;
-  padding: 12px 8px;
+  flex: 0 0 auto;
+  padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid #3a3a48;
   background: #25252f;
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .tool.active {
