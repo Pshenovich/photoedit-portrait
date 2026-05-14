@@ -29,6 +29,8 @@ const autoLipsBtn = document.getElementById("autoLipsBtn");
 const viewport = document.getElementById("viewport");
 
 canvas.style.touchAction = "none";
+if (viewport) viewport.style.touchAction = "none";
+const MAX_EDGE = 1536;
 const UNDO_MAX = 24;
 
 let tool = "smooth";
@@ -377,18 +379,9 @@ function distance(ax, ay, bx, by) {
   return Math.hypot(bx - ax, by - ay);
 }
 
-function handleStart(ev) {
+function strokeBegin(clientX, clientY) {
   if (!canvas.width) return;
-  ev.preventDefault();
-  if (typeof ev.pointerId === "number" && canvas.setPointerCapture) {
-    try {
-      canvas.setPointerCapture(ev.pointerId);
-    } catch (_) {
-      /* ignore */
-    }
-  }
-  const t = ev.touches ? ev.touches[0] : ev;
-  const { x, y } = canvasCoords(t.clientX, t.clientY);
+  const { x, y } = canvasCoords(clientX, clientY);
   drawing = true;
   lastX = x;
   lastY = y;
@@ -399,15 +392,13 @@ function handleStart(ev) {
     else if (tool === "eyes") applyEyes(x, y, r);
     else if (tool === "lip") applyLipDot(x, y, r, lipColor.value);
   } catch (err) {
-    console.warn("handleStart", err);
+    console.warn("strokeBegin", err);
   }
 }
 
-function handleMove(ev) {
+function strokeDrag(clientX, clientY) {
   if (!drawing || !canvas.width) return;
-  ev.preventDefault();
-  const t = ev.touches ? ev.touches[0] : ev;
-  const { x, y } = canvasCoords(t.clientX, t.clientY);
+  const { x, y } = canvasCoords(clientX, clientY);
   const r = Number(brushSize.value);
   const step = Math.max(3, r * 0.32);
 
@@ -432,14 +423,14 @@ function handleMove(ev) {
     lastX = x;
     lastY = y;
   } catch (err) {
-    console.warn("handleMove", err);
+    console.warn("strokeDrag", err);
   }
 }
 
-function handleEnd(ev) {
+function strokeFinish(ev) {
   if (!drawing) return;
-  if (ev.cancelable) ev.preventDefault();
-  if (typeof ev.pointerId === "number" && canvas.releasePointerCapture) {
+  if (ev && ev.cancelable) ev.preventDefault();
+  if (ev && typeof ev.pointerId === "number" && canvas.releasePointerCapture) {
     try {
       if (canvas.hasPointerCapture && canvas.hasPointerCapture(ev.pointerId)) {
         canvas.releasePointerCapture(ev.pointerId);
@@ -451,19 +442,85 @@ function handleEnd(ev) {
   drawing = false;
 }
 
-canvas.addEventListener("pointerdown", handleStart);
-canvas.addEventListener("pointermove", handleMove);
-canvas.addEventListener("pointerup", handleEnd);
-canvas.addEventListener("pointercancel", handleEnd);
-canvas.addEventListener("pointerleave", handleEnd);
+function onPointerDown(ev) {
+  if (!canvas.width) return;
+  if (ev.pointerType === "touch") return;
+  ev.preventDefault();
+  if (typeof ev.pointerId === "number" && canvas.setPointerCapture) {
+    try {
+      canvas.setPointerCapture(ev.pointerId);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  strokeBegin(ev.clientX, ev.clientY);
+}
+
+function onPointerMove(ev) {
+  if (!drawing || !canvas.width) return;
+  if (ev.pointerType === "touch") return;
+  ev.preventDefault();
+  strokeDrag(ev.clientX, ev.clientY);
+}
+
+function onPointerUp(ev) {
+  if (ev.pointerType === "touch") return;
+  strokeFinish(ev);
+}
+
+function onPointerCancel(ev) {
+  if (ev.pointerType === "touch") return;
+  strokeFinish(ev);
+}
+
+canvas.addEventListener("pointerdown", onPointerDown);
+canvas.addEventListener("pointermove", onPointerMove);
+canvas.addEventListener("pointerup", onPointerUp);
+canvas.addEventListener("pointercancel", onPointerCancel);
+
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.touches.length === 2) {
+      if (drawing) strokeFinish(null);
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    strokeBegin(t.clientX, t.clientY);
+  },
+  { passive: false }
+);
 
 canvas.addEventListener(
   "touchmove",
   (e) => {
-    if (drawing) e.preventDefault();
+    if (e.touches.length === 2) {
+      if (drawing) strokeFinish(null);
+      return;
+    }
+    if (!drawing || e.touches.length !== 1) return;
+    e.preventDefault();
+    strokeDrag(e.touches[0].clientX, e.touches[0].clientY);
   },
   { passive: false }
 );
+
+canvas.addEventListener(
+  "touchend",
+  (e) => {
+    if (!drawing) return;
+    if (e.touches.length > 0) return;
+    e.preventDefault();
+    strokeFinish(null);
+  },
+  { passive: false }
+);
+
+canvas.addEventListener("touchcancel", () => {
+  strokeFinish(null);
+});
 
 /** Pinch zoom / pan on preview */
 let pinchDist0 = 0;
