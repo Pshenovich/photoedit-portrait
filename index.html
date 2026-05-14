@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0f0f12" />
+  <title>PhotoEdit Pro — портрет</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <label class="btn btn-file" tabindex="0">
+        Фото
+        <input type="file" accept="image/*" id="fileInput" hidden />
+      </label>
+      <div class="top-actions">
+        <button type="button" class="btn" id="undoBtn" disabled title="Отменить">↩</button>
+        <button type="button" class="btn" id="saveBtn" disabled title="Сохранить JPEG">Сохранить</button>
+        <button type="button" class="btn" id="resetBtn" disabled title="Сбросить фото">Сброс</button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <p class="hint" id="hint">Выберите портретное фото. После анализа лица появятся кнопки «Авто». Два пальца — масштаб.</p>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <div class="canvas-box" id="canvasBox">
+        <div class="viewport" id="viewport">
+          <canvas id="view"></canvas>
+        </div>
+      </div>
+    </main>
+
+    <footer class="dock safe-bottom">
+      <div class="auto-row" aria-label="Автоматические правки">
+        <button type="button" class="btn btn-auto" id="autoSkinBtn" disabled>Авто кожа</button>
+        <button type="button" class="btn btn-auto" id="autoEyesBtn" disabled>Авто глаза</button>
+        <button type="button" class="btn btn-auto" id="autoLipsBtn" disabled>Авто губы</button>
+      </div>
+      <div class="tools" role="tablist" aria-label="Инструменты">
+        <button type="button" class="tool active" data-tool="smooth" aria-pressed="true">Кожа</button>
+        <button type="button" class="tool" data-tool="eyes" aria-pressed="false">Глаза</button>
+        <button type="button" class="tool" data-tool="lip" aria-pressed="false">Помада</button>
+      </div>
+      <div class="sliders">
+        <label class="slider-label">
+          <span>Сила</span>
+          <input type="range" id="intensity" min="8" max="100" value="52" />
+        </label>
+        <label class="slider-label">
+          <span>Кисть</span>
+          <input type="range" id="brushSize" min="8" max="120" value="36" />
+        </label>
+        <label class="slider-label lip-only hidden" id="lipColorWrap">
+          <span>Цвет</span>
+          <input type="color" id="lipColor" value="#b8324a" />
+        </label>
+      </div>
+    </footer>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
