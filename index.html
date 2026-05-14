@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=11" />
+  <link rel="stylesheet" href="styles.css?v=12" />
 </head>
 <body>
   <div class="app">
@@ -82,7 +82,11 @@
 
       <div class="adj-panel" id="cometPanel">
         <div class="adj-title">ИИ (CometAPI)</div>
-        <p class="comet-hint">Работает только на деплое с <code>COMET_API_KEY</code> (Vercel). С GitHub Pages — недоступно.</p>
+        <p class="comet-hint">
+          Работает только на деплое с <code>COMET_API_KEY</code> (Vercel). С GitHub Pages — недоступно.
+          В Vercel при «Редактировать» значение секрета <strong>намеренно пустое</strong> — ключ не показывают повторно, это не значит, что он удалён.
+          Диагностика (без раскрытия ключа): <a href="/api/comet-env-check" target="_blank" rel="noopener">/api/comet-env-check</a>
+        </p>
         <div class="comet-presets" id="cometPresets" aria-label="Пресеты ИИ">
           <button type="button" class="btn btn-small" data-comet="full_beauty">Журнал</button>
           <button type="button" class="btn btn-small" data-comet="skin_studio">Кожа</button>
@@ -144,6 +148,6 @@
       </div>
     </footer>
   </div>
-  <script type="module" src="app.js?v=11"></script>
+  <script type="module" src="app.js?v=12"></script>
 </body>
 </html>

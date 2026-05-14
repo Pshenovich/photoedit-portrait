@@ -3,6 +3,8 @@
  * Переменная окружения: COMET_API_KEY
  */
 
+const { normalizeApiKey } = require("./_cometKey");
+
 function sendJson(res, code, obj) {
   res.statusCode = code;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -39,16 +41,6 @@ async function readJsonBody(req) {
   } catch {
     return {};
   }
-}
-
-/** Убираем кавычки, переносы, случайный префикс Bearer — иначе получится Bearer Bearer … и Comet вернёт invalid token. */
-function normalizeApiKey(raw) {
-  if (raw == null) return "";
-  let k = String(raw).trim();
-  k = k.replace(/^["'`]+|["'`]+$/g, "");
-  k = k.replace(/^Bearer\s+/i, "").trim();
-  k = k.split(/\r?\n/)[0].trim();
-  return k;
 }
 
 function hintForCometMessage(msg) {

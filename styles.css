@@ -246,6 +246,16 @@ body {
   border-radius: 6px;
 }
 
+.comet-hint a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.comet-hint strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
 .comet-presets {
   display: flex;
   flex-wrap: wrap;
