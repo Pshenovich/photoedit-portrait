@@ -80,7 +80,9 @@ function faceBBox(lm, w, h, pad = 0.06) {
  */
 function buildControls(lm, w, h, p, bb) {
   const controls = [];
-  const unit = Math.max(8, bb.fw * 0.01);
+  /** Масштаб от размера лица в кадре — раньше unit≈8–12 даже на 2K, визуально «ноль». */
+  const faceSpan = Math.max(bb.fw, bb.fh, 32);
+  const unit = Math.max(14, faceSpan * 0.034);
   const sigmaN = bb.fw * 0.055;
   const sigmaW = bb.fw * 0.09;
   const midX = lmPx(lm, 6, w, h).x;
@@ -93,27 +95,27 @@ function buildControls(lm, w, h, p, bb) {
 
   const ns = s(p.nose_size);
   if (ns > 0) {
-    add(48, (midX - lmPx(lm, 48, w, h).x) * 0.22, 0, sigmaN, ns);
-    add(278, (midX - lmPx(lm, 278, w, h).x) * 0.22, 0, sigmaN, ns);
-    add(98, (midX - lmPx(lm, 98, w, h).x) * 0.12, 0, sigmaN * 0.85, ns * 0.7);
-    add(327, (midX - lmPx(lm, 327, w, h).x) * 0.12, 0, sigmaN * 0.85, ns * 0.7);
+    add(48, (midX - lmPx(lm, 48, w, h).x) * 0.34, 0, sigmaN, ns);
+    add(278, (midX - lmPx(lm, 278, w, h).x) * 0.34, 0, sigmaN, ns);
+    add(98, (midX - lmPx(lm, 98, w, h).x) * 0.2, 0, sigmaN * 0.85, ns * 0.7);
+    add(327, (midX - lmPx(lm, 327, w, h).x) * 0.2, 0, sigmaN * 0.85, ns * 0.7);
   }
   const nl = s(p.nose_lift);
   if (nl > 0) {
-    add(1, 0, -unit * 1.8, sigmaN * 0.75, nl);
-    add(2, 0, -unit * 1.1, sigmaN * 0.65, nl);
-    add(4, 0, -unit * 0.9, sigmaN * 0.55, nl * 0.6);
+    add(1, 0, -unit * 2.35, sigmaN * 0.75, nl);
+    add(2, 0, -unit * 1.45, sigmaN * 0.65, nl);
+    add(4, 0, -unit * 1.15, sigmaN * 0.55, nl * 0.6);
   }
   const nb = s(p.nose_bridge);
   if (nb > 0) {
-    add(168, (midX - lmPx(lm, 168, w, h).x) * 0.15, 0, sigmaW * 0.7, nb);
-    add(6, (midX - lmPx(lm, 6, w, h).x) * 0.1, 0, sigmaW * 0.55, nb);
-    add(197, (midX - lmPx(lm, 197, w, h).x) * 0.08, 0, sigmaW * 0.5, nb * 0.8);
+    add(168, (midX - lmPx(lm, 168, w, h).x) * 0.24, 0, sigmaW * 0.7, nb);
+    add(6, (midX - lmPx(lm, 6, w, h).x) * 0.16, 0, sigmaW * 0.55, nb);
+    add(197, (midX - lmPx(lm, 197, w, h).x) * 0.13, 0, sigmaW * 0.5, nb * 0.8);
   }
   const nt = s(p.nose_tip);
   if (nt > 0) {
-    add(1, 0, -unit * 0.85, sigmaN * 0.55, nt);
-    add(19, 0, -unit * 0.45, sigmaN * 0.45, nt * 0.6);
+    add(1, 0, -unit * 1.25, sigmaN * 0.55, nt);
+    add(19, 0, -unit * 0.65, sigmaN * 0.45, nt * 0.6);
   }
 
   const cx = (lmPx(lm, 1, w, h).x + lmPx(lm, 152, w, h).x) / 2;
@@ -124,7 +126,7 @@ function buildControls(lm, w, h, p, bb) {
       const pt = lmPx(lm, idx, w, h);
       const ang = Math.atan2(pt.y - cy, pt.x - cx);
       const dist = Math.hypot(pt.x - cx, pt.y - cy);
-      const extra = dist * 0.07 * fs;
+      const extra = dist * 0.12 * fs;
       controls.push({
         x: pt.x,
         y: pt.y,
@@ -142,14 +144,14 @@ function buildControls(lm, w, h, p, bb) {
     controls.push({
       x: p234.x,
       y: p234.y,
-      dx: unit * 1.4 * hn,
+      dx: unit * 2.1 * hn,
       dy: 0,
       sigma: sigmaW * 1.1,
     });
     controls.push({
       x: p454.x,
       y: p454.y,
-      dx: -unit * 1.4 * hn,
+      dx: -unit * 2.1 * hn,
       dy: 0,
       sigma: sigmaW * 1.1,
     });
@@ -161,39 +163,39 @@ function buildControls(lm, w, h, p, bb) {
     controls.push({
       x: p152.x,
       y: p152.y,
-      dx: (midX - p152.x) * 0.12 * vs,
-      dy: -unit * 1.6 * vs,
+      dx: (midX - p152.x) * 0.2 * vs,
+      dy: -unit * 2.2 * vs,
       sigma: sigmaW * 0.95,
     });
-    add(176, (midX - lmPx(lm, 176, w, h).x) * 0.06 * vs, -unit * 0.35 * vs, sigmaW * 0.75, vs);
-    add(400, (midX - lmPx(lm, 400, w, h).x) * 0.06 * vs, -unit * 0.35 * vs, sigmaW * 0.75, vs);
+    add(176, (midX - lmPx(lm, 176, w, h).x) * 0.1 * vs, -unit * 0.52 * vs, sigmaW * 0.75, vs);
+    add(400, (midX - lmPx(lm, 400, w, h).x) * 0.1 * vs, -unit * 0.52 * vs, sigmaW * 0.75, vs);
   }
 
   const cw = s(p.chin_width);
   if (cw > 0) {
-    add(148, -unit * 0.9 * cw, 0, sigmaN, cw);
-    add(377, unit * 0.9 * cw, 0, sigmaN, cw);
-    add(152, 0, unit * 0.25 * cw, sigmaN * 0.9, cw * 0.4);
+    add(148, -unit * 1.35 * cw, 0, sigmaN, cw);
+    add(377, unit * 1.35 * cw, 0, sigmaN, cw);
+    add(152, 0, unit * 0.38 * cw, sigmaN * 0.9, cw * 0.4);
   }
 
   const cl = s(p.chin_len);
   if (cl > 0) {
-    add(152, 0, unit * 1.5 * cl, sigmaW * 0.85, cl);
-    add(176, 0, unit * 0.7 * cl, sigmaN * 0.8, cl * 0.7);
-    add(400, 0, unit * 0.7 * cl, sigmaN * 0.8, cl * 0.7);
+    add(152, 0, unit * 2.35 * cl, sigmaW * 0.85, cl);
+    add(176, 0, unit * 1.05 * cl, sigmaN * 0.8, cl * 0.7);
+    add(400, 0, unit * 1.05 * cl, sigmaN * 0.8, cl * 0.7);
   }
 
   const cp = s(p.chin_point);
   if (cp > 0) {
-    add(148, unit * 0.55 * cp, unit * 0.2 * cp, sigmaN * 0.85, cp);
-    add(377, -unit * 0.55 * cp, unit * 0.2 * cp, sigmaN * 0.85, cp);
-    add(152, 0, -unit * 0.35 * cp, sigmaN * 0.65, cp * 0.6);
+    add(148, unit * 0.82 * cp, unit * 0.3 * cp, sigmaN * 0.85, cp);
+    add(377, -unit * 0.82 * cp, unit * 0.3 * cp, sigmaN * 0.85, cp);
+    add(152, 0, -unit * 0.52 * cp, sigmaN * 0.65, cp * 0.6);
   }
 
   const sm = s(p.smile);
   if (sm > 0) {
-    add(61, 0, -unit * 1.2 * sm, sigmaN * 0.75, sm);
-    add(291, 0, -unit * 1.2 * sm, sigmaN * 0.75, sm);
+    add(61, 0, -unit * 1.75 * sm, sigmaN * 0.75, sm);
+    add(291, 0, -unit * 1.75 * sm, sigmaN * 0.75, sm);
   }
 
   const lp = s(p.lip_plump);
@@ -206,8 +208,8 @@ function buildControls(lm, w, h, p, bb) {
       controls.push({
         x: pt.x,
         y: pt.y,
-        dx: (vx / len) * unit * 0.65 * lp,
-        dy: (vy / len) * unit * 0.45 * lp,
+        dx: (vx / len) * unit * 0.98 * lp,
+        dy: (vy / len) * unit * 0.68 * lp,
         sigma: sigmaN * 0.65,
       });
     }
@@ -235,11 +237,13 @@ function dispAt(controls, x, y) {
 }
 
 function sampleBilinear(data, w, h, x, y) {
-  if (x < 0 || y < 0 || x >= w - 1 || y >= h - 1) return null;
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const fx = x - x0;
-  const fy = y - y0;
+  const xn = Math.min(w - 1.000001, Math.max(0, x));
+  const yn = Math.min(h - 1.000001, Math.max(0, y));
+  const x0 = Math.floor(xn);
+  const y0 = Math.floor(yn);
+  if (x0 >= w - 1 || y0 >= h - 1) return null;
+  const fx = xn - x0;
+  const fy = yn - y0;
   const i00 = (y0 * w + x0) * 4;
   const i10 = (y0 * w + x0 + 1) * 4;
   const i01 = ((y0 + 1) * w + x0) * 4;
