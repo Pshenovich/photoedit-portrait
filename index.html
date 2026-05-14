@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <link rel="stylesheet" href="styles.css?v=9" />
 </head>
 <body>
   <div class="app">
@@ -60,6 +60,52 @@
         </label>
       </div>
 
+      <div class="adj-panel" id="lightPanel">
+        <div class="adj-title">Свет и цвет</div>
+        <label class="adj-row"><span>Экспозиция</span><input type="range" id="light_exposure" min="-100" max="100" value="0" /></label>
+        <label class="adj-row"><span>Контраст</span><input type="range" id="light_contrast" min="-100" max="100" value="0" /></label>
+        <label class="adj-row"><span>Теплота</span><input type="range" id="light_warmth" min="-100" max="100" value="0" /></label>
+        <label class="adj-row"><span>Насыщенность</span><input type="range" id="light_saturation" min="-100" max="100" value="0" /></label>
+        <label class="adj-row"><span>Резкость</span><input type="range" id="light_sharpen" min="0" max="100" value="0" /></label>
+        <label class="adj-row"><span>Виньетка</span><input type="range" id="light_vignette" min="0" max="100" value="0" /></label>
+        <button type="button" class="btn btn-block" id="applyLightBtn" disabled>Применить свет</button>
+        <button type="button" class="btn btn-ghost btn-block" id="resetLightSliders" disabled>Сбросить свет</button>
+      </div>
+
+      <div class="adj-panel" id="rotatePanel">
+        <div class="adj-title">Поворот</div>
+        <div class="btn-row">
+          <button type="button" class="btn" id="rotCcwBtn" disabled title="90° против часовой">↺ 90°</button>
+          <button type="button" class="btn" id="rotCwBtn" disabled title="90° по часовой">↻ 90°</button>
+        </div>
+      </div>
+
+      <div class="adj-panel" id="cometPanel">
+        <div class="adj-title">ИИ (CometAPI)</div>
+        <p class="comet-hint">Работает только на деплое с <code>COMET_API_KEY</code> (Vercel). С GitHub Pages — недоступно.</p>
+        <div class="comet-presets" id="cometPresets" aria-label="Пресеты ИИ">
+          <button type="button" class="btn btn-small" data-comet="full_beauty">Журнал</button>
+          <button type="button" class="btn btn-small" data-comet="skin_studio">Кожа</button>
+          <button type="button" class="btn btn-small" data-comet="makeup_natural">Макияж</button>
+          <button type="button" class="btn btn-small" data-comet="eyes_bright">Глаза</button>
+          <button type="button" class="btn btn-small" data-comet="teeth_smile">Зубы</button>
+          <button type="button" class="btn btn-small" data-comet="hair_shine">Волосы</button>
+          <button type="button" class="btn btn-small" data-comet="bg_soft">Фон</button>
+        </div>
+        <label class="adj-row comet-model-row">
+          <span>Модель</span>
+          <select id="cometModel" class="comet-select">
+            <option value="gpt-image-2">gpt-image-2</option>
+            <option value="gpt-image-1">gpt-image-1</option>
+          </select>
+        </label>
+        <label class="slider-label comet-prompt-label">
+          <span>Промпт</span>
+          <textarea id="cometPrompt" rows="3" placeholder="Опишите желаемую ретушь на английском…"></textarea>
+        </label>
+        <button type="button" class="btn btn-block" id="cometApplyBtn" disabled>ИИ улучшить</button>
+      </div>
+
       <div class="adj-panel" id="adjustPanel">
         <div class="adj-title">Коррекции (нужно лицо)</div>
         <button type="button" class="btn btn-block" id="applyAdjustBtn" disabled>Применить коррекции</button>
@@ -98,6 +144,6 @@
       </div>
     </footer>
   </div>
-  <script type="module" src="app.js?v=8"></script>
+  <script type="module" src="app.js?v=9"></script>
 </body>
 </html>

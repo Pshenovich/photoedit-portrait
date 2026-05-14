@@ -217,6 +217,73 @@ body {
   accent-color: var(--accent);
 }
 
+.btn-row {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-row .btn {
+  flex: 1;
+}
+
+.btn-small {
+  padding: 8px 10px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.comet-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+
+.comet-hint code {
+  font-size: 11px;
+  background: #1a1a22;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.comet-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.comet-model-row .comet-select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #3a3a48;
+  background: #15151a;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.comet-prompt-label {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.comet-prompt-label textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 72px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #3a3a48;
+  background: #15151a;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
 .dock {
   flex-shrink: 0;
   max-height: min(48vh, 420px);

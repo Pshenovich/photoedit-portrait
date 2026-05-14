@@ -1,0 +1,73 @@
+/**
+ * ИИ-ретушь через CometAPI (OpenAI-совместимый /v1/images/edits).
+ * Запрос идёт на /api/comet-edit — ключ хранится только на сервере (Vercel COMET_API_KEY).
+ */
+
+const COMET_PRESETS = {
+  full_beauty:
+    "High-end beauty magazine portrait retouch: natural smooth skin, subtle professional makeup, brighter eyes, slight teeth whitening if visible, soft studio lighting. Preserve identity, face shape, and expression exactly. Photorealistic JPEG.",
+  skin_studio:
+    "Professional skin retouch only: even tone, reduce blemishes and redness, keep natural pores and texture. Do not change facial features or makeup. Photorealistic.",
+  makeup_natural:
+    "Apply subtle natural makeup: light mascara, soft neutral eyeshadow, natural lip tint, groomed brows. Keep face structure unchanged. Photorealistic portrait.",
+  eyes_bright:
+    "Brighten eyes subtly, reduce under-eye shadows and redness, very subtle eyeliner. Natural look, preserve identity.",
+  teeth_smile:
+    "Naturally whiten visible teeth slightly and gently enhance smile lines if any. Realistic, not exaggerated.",
+  hair_shine:
+    "Add natural healthy shine to hair, slightly improve separation from background. Do not change hair color drastically. Subtle and realistic.",
+  bg_soft:
+    "Slightly soften and darken only the background blur while keeping the subject face and body sharp. Natural depth of field look.",
+};
+
+export function getCometPresetKeys() {
+  return Object.keys(COMET_PRESETS);
+}
+
+export function getCometPresetPrompt(key) {
+  return COMET_PRESETS[key] || "";
+}
+
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ prompt: string, model?: string, maxSide?: number }} opts
+ * @returns {Promise<string>} data URL (image/jpeg) готовый для drawImage
+ */
+export async function runCometEdit(canvas, opts) {
+  const prompt = (opts.prompt || "").trim();
+  if (!prompt) throw new Error("Пустой промпт");
+
+  const maxSide = opts.maxSide ?? 1152;
+  const sc = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  const tw = Math.max(1, Math.round(canvas.width * sc));
+  const th = Math.max(1, Math.round(canvas.height * sc));
+  const mc = document.createElement("canvas");
+  mc.width = tw;
+  mc.height = th;
+  const mx = mc.getContext("2d");
+  mx.imageSmoothingEnabled = true;
+  mx.imageSmoothingQuality = "high";
+  mx.drawImage(canvas, 0, 0, tw, th);
+
+  const imageBase64 = mc.toDataURL("image/jpeg", 0.9).split(",")[1];
+
+  const r = await fetch("/api/comet-edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      model: opts.model || "gpt-image-2",
+      imageBase64,
+      output_format: "jpeg",
+    }),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = j.error || j.message || JSON.stringify(j) || r.statusText;
+    throw new Error(typeof msg === "string" ? msg : "Comet API error");
+  }
+  const b64 = j.b64_json;
+  if (!b64) throw new Error("Пустой ответ от ИИ");
+  return `data:image/jpeg;base64,${b64}`;
+}

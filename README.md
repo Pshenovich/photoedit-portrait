@@ -39,6 +39,13 @@ NPM_CONFIG_CACHE=/tmp/npm-cache-photoedit npx vercel@latest deploy --prod --yes 
 python3 -m http.server 8080
 ```
 
+Для **ИИ (CometAPI)** нужен деплой на Vercel (или `vercel dev`), а не чистая статика: функция `api/comet-edit.js` проксирует запрос на `https://api.cometapi.com/v1/images/edits`.
+
+1. В проекте Vercel: **Settings → Environment Variables** → `COMET_API_KEY` = ваш ключ с [CometAPI](https://apidoc.cometapi.com).
+2. Локально: `vercel dev` в корне репозитория с тем же ключом в `.env` или в окружении.
+
+Без ключа кнопка «ИИ улучшить» вернёт сообщение об отсутствии `COMET_API_KEY`.
+
 ## Заметки
 
 - Первый визит тянет WASM/модель MediaPipe из сети.

@@ -11,6 +11,8 @@ import {
   getLandmarker,
 } from "./engine.js";
 import { applyFaceAdjust } from "./adjustEngine.js";
+import { applyLightPipeline, rotateCanvas90CW, rotateCanvas90CCW } from "./filters.js";
+import { runCometEdit, getCometPresetPrompt } from "./cometClient.js";
 
 const fileInput = document.getElementById("fileInput");
 const canvas = document.getElementById("view");
@@ -32,6 +34,14 @@ const viewport = document.getElementById("viewport");
 const applyAdjustBtn = document.getElementById("applyAdjustBtn");
 const resetAdjustSliders = document.getElementById("resetAdjustSliders");
 const adjustPanel = document.getElementById("adjustPanel");
+const applyLightBtn = document.getElementById("applyLightBtn");
+const resetLightSliders = document.getElementById("resetLightSliders");
+const rotCwBtn = document.getElementById("rotCwBtn");
+const rotCcwBtn = document.getElementById("rotCcwBtn");
+const cometApplyBtn = document.getElementById("cometApplyBtn");
+const cometPrompt = document.getElementById("cometPrompt");
+const cometModel = document.getElementById("cometModel");
+const cometPresets = document.getElementById("cometPresets");
 
 canvas.style.touchAction = "none";
 if (viewport) viewport.style.touchAction = "none";
@@ -157,11 +167,173 @@ if (resetAdjustSliders) {
   });
 }
 
+function applyDataUrlToCanvasMaxEdge(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const w0 = img.naturalWidth || img.width;
+      const h0 = img.naturalHeight || img.height;
+      let w = w0;
+      let h = h0;
+      const sc = Math.min(1, MAX_EDGE / Math.max(w, h));
+      w = Math.round(w * sc);
+      h = Math.round(h * sc);
+      canvas.width = w;
+      canvas.height = h;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve();
+    };
+    img.onerror = () => reject(new Error("Не удалось декодировать ответ ИИ"));
+    img.src = dataUrl;
+  });
+}
+
+async function onApplyLight() {
+  if (!canvas.width) return;
+  const p = readLightParams();
+  if (!hasLightEffect(p)) {
+    setStatus("Сдвиньте хотя бы один слайдер «Свет и цвет».");
+    return;
+  }
+  setStatus("Свет и цвет…");
+  await new Promise((r) => requestAnimationFrame(r));
+  pushUndo();
+  try {
+    applyLightPipeline(ctx, canvas, p);
+    if (faceLandmarks) refreshFaceFromCanvas();
+    setStatus("Свет применён. ↩ — отмена.");
+    setTimeout(() => {
+      if (statusEl && statusEl.textContent.includes("Свет применён")) setStatus("");
+    }, 2400);
+  } catch (e) {
+    console.warn(e);
+    popUndo();
+    setStatus("Ошибка обработки света.");
+  }
+}
+
+async function onRotate(cw) {
+  if (!canvas.width) return;
+  setStatus("Поворот…");
+  await new Promise((r) => requestAnimationFrame(r));
+  pushUndo();
+  try {
+    if (cw) rotateCanvas90CW(canvas, ctx);
+    else rotateCanvas90CCW(canvas, ctx);
+    resetViewportPanZoom();
+    await analyzeFace();
+    setStatus("Поворот выполнен.");
+    setTimeout(() => {
+      if (statusEl && statusEl.textContent.includes("Поворот выполнен")) setStatus("");
+    }, 2000);
+  } catch (e) {
+    console.warn(e);
+    popUndo();
+    setStatus("Ошибка поворота.");
+  }
+}
+
+async function onCometApply() {
+  if (!canvas.width || !cometPrompt) return;
+  const prompt = cometPrompt.value.trim();
+  if (!prompt) {
+    setStatus("Введите промпт или нажмите пресет.");
+    return;
+  }
+  const model = cometModel ? cometModel.value : "gpt-image-2";
+  setStatus("ИИ ретушь (до ~1 мин, зависит от API)…");
+  pushUndo();
+  try {
+    const dataUrl = await runCometEdit(canvas, { prompt, model });
+    await applyDataUrlToCanvasMaxEdge(dataUrl);
+    resetViewportPanZoom();
+    await analyzeFace();
+    setStatus("ИИ готово. ↩ — отмена.");
+    setTimeout(() => {
+      if (statusEl && statusEl.textContent.includes("ИИ готово")) setStatus("");
+    }, 3200);
+  } catch (e) {
+    console.warn(e);
+    popUndo();
+    setStatus(e && e.message ? String(e.message) : "ИИ недоступен (ключ / сеть / таймаут).");
+  }
+}
+
+if (applyLightBtn) applyLightBtn.addEventListener("click", () => void onApplyLight());
+if (resetLightSliders) {
+  resetLightSliders.addEventListener("click", () => {
+    for (const id of [
+      "light_exposure",
+      "light_contrast",
+      "light_warmth",
+      "light_saturation",
+      "light_sharpen",
+      "light_vignette",
+    ]) {
+      const el = document.getElementById(id);
+      if (el) el.value = "0";
+    }
+  });
+}
+if (rotCwBtn) rotCwBtn.addEventListener("click", () => void onRotate(true));
+if (rotCcwBtn) rotCcwBtn.addEventListener("click", () => void onRotate(false));
+if (cometApplyBtn) cometApplyBtn.addEventListener("click", () => void onCometApply());
+if (cometPresets) {
+  cometPresets.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest && e.target.closest("[data-comet]");
+    if (!btn || !cometPrompt) return;
+    const key = btn.getAttribute("data-comet");
+    const text = key ? getCometPresetPrompt(key) : "";
+    if (text) cometPrompt.value = text;
+  });
+}
+
+function readLightParams() {
+  return {
+    exposure: Number(document.getElementById("light_exposure")?.value) || 0,
+    contrast: Number(document.getElementById("light_contrast")?.value) || 0,
+    warmth: Number(document.getElementById("light_warmth")?.value) || 0,
+    saturation: Number(document.getElementById("light_saturation")?.value) || 0,
+    sharpen: Number(document.getElementById("light_sharpen")?.value) || 0,
+    vignette: Number(document.getElementById("light_vignette")?.value) || 0,
+  };
+}
+
+function hasLightEffect(p) {
+  return (
+    p.exposure !== 0 ||
+    p.contrast !== 0 ||
+    p.warmth !== 0 ||
+    p.saturation !== 0 ||
+    p.sharpen > 0 ||
+    p.vignette > 0
+  );
+}
+
 function updateAutoButtonState() {
   const hasImg = !!(canvas && canvas.width && canvas.height);
   if (autoSkinBtn) autoSkinBtn.disabled = !hasImg;
   if (autoEyesBtn) autoEyesBtn.disabled = !hasImg || !faceLandmarks;
   if (autoLipsBtn) autoLipsBtn.disabled = !hasImg || !lipMaskCanvas;
+  if (applyLightBtn) applyLightBtn.disabled = !hasImg;
+  if (resetLightSliders) resetLightSliders.disabled = !hasImg;
+  if (rotCwBtn) rotCwBtn.disabled = !hasImg;
+  if (rotCcwBtn) rotCcwBtn.disabled = !hasImg;
+  if (cometApplyBtn) cometApplyBtn.disabled = !hasImg;
+  const lp = document.getElementById("lightPanel");
+  if (lp) {
+    lp.querySelectorAll('input[type="range"]').forEach((inp) => {
+      inp.disabled = !hasImg;
+    });
+  }
+  if (cometPrompt) cometPrompt.disabled = !hasImg;
+  if (cometModel) cometModel.disabled = !hasImg;
+  if (cometPresets) {
+    cometPresets.querySelectorAll("button[data-comet]").forEach((b) => {
+      b.disabled = !hasImg;
+    });
+  }
 }
 
 function setStatus(msg) {
@@ -801,6 +973,13 @@ let panY = 0;
 function applyViewportTransform() {
   if (!viewport) return;
   viewport.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+}
+
+function resetViewportPanZoom() {
+  scale = 1;
+  panX = 0;
+  panY = 0;
+  applyViewportTransform();
 }
 
 if (viewport) {
