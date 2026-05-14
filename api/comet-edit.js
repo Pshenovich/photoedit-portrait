@@ -9,6 +9,26 @@ function sendJson(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+/** Comet / OpenAI часто отдают error как объект — всегда отдаём клиенту строку. */
+function stringifyCometError(payload) {
+  if (payload == null) return "Неизвестная ошибка CometAPI";
+  if (typeof payload === "string") return payload;
+  if (typeof payload === "object") {
+    const e = payload.error ?? payload.message ?? payload;
+    if (typeof e === "string") return e;
+    if (e && typeof e === "object") {
+      const m = e.message ?? e.msg ?? e.detail;
+      if (typeof m === "string") return m;
+    }
+    try {
+      return JSON.stringify(payload).slice(0, 800);
+    } catch {
+      return "Ошибка CometAPI";
+    }
+  }
+  return String(payload);
+}
+
 async function readJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -36,7 +56,7 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const key = process.env.COMET_API_KEY;
+  const key = (process.env.COMET_API_KEY || "").trim().replace(/^["']|["']$/g, "");
   if (!key) {
     sendJson(res, 501, {
       error:
@@ -76,10 +96,19 @@ module.exports = async (req, res) => {
   }
 
   const form = new FormData();
-  form.append("image", new Blob([buf], { type: "image/jpeg" }), "photo.jpg");
+  const jpegPart =
+    typeof File !== "undefined"
+      ? new File([buf], "photo.jpg", { type: "image/jpeg" })
+      : new Blob([buf], { type: "image/jpeg" });
+  if (typeof File !== "undefined" && jpegPart instanceof File) {
+    form.append("image", jpegPart);
+  } else {
+    form.append("image", jpegPart, "photo.jpg");
+  }
   form.append("prompt", prompt.slice(0, 4000));
   form.append("model", model);
   form.append("output_format", output_format);
+  form.append("response_format", "b64_json");
   form.append("n", "1");
 
   try {
@@ -102,18 +131,46 @@ module.exports = async (req, res) => {
 
     if (!upstream.ok) {
       sendJson(res, upstream.status >= 400 ? upstream.status : 502, {
-        error: json.error || json.message || json,
+        error: stringifyCometError(json),
+        status: upstream.status,
       });
       return;
     }
 
-    const b64 = json.data && json.data[0] && json.data[0].b64_json;
-    if (!b64) {
-      sendJson(res, 502, { error: "Нет b64_json в ответе", json });
+    if (json.error) {
+      sendJson(res, 502, {
+        error: stringifyCometError(json),
+        status: upstream.status,
+      });
       return;
     }
 
-    sendJson(res, 200, { b64_json: b64 });
+    const row = json.data && json.data[0];
+    let b64Out = row && row.b64_json;
+    if (!b64Out && row && row.url && typeof row.url === "string") {
+      try {
+        const imgRes = await fetch(row.url);
+        if (!imgRes.ok) {
+          sendJson(res, 502, {
+            error: `Comet вернул url, но скачивание не удалось: ${imgRes.status}`,
+          });
+          return;
+        }
+        const ab = await imgRes.arrayBuffer();
+        b64Out = Buffer.from(ab).toString("base64");
+      } catch (fe) {
+        sendJson(res, 502, { error: `url из ответа: ${fe.message || fe}` });
+        return;
+      }
+    }
+    if (!b64Out) {
+      sendJson(res, 502, {
+        error: `Нет изображения в ответе: ${stringifyCometError(json)}`,
+      });
+      return;
+    }
+
+    sendJson(res, 200, { b64_json: b64Out });
   } catch (e) {
     console.error(e);
     sendJson(res, 500, { error: e.message || "Upstream fetch failed" });

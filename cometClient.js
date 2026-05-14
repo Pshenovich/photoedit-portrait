@@ -64,8 +64,17 @@ export async function runCometEdit(canvas, opts) {
 
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const msg = j.error || j.message || JSON.stringify(j) || r.statusText;
-    throw new Error(typeof msg === "string" ? msg : "Comet API error");
+    const raw = j.error ?? j.message ?? j;
+    let msg;
+    if (typeof raw === "string") msg = raw;
+    else if (raw && typeof raw === "object" && typeof raw.message === "string") msg = raw.message;
+    else
+      try {
+        msg = JSON.stringify(raw).slice(0, 500);
+      } catch {
+        msg = r.statusText;
+      }
+    throw new Error(msg || "Comet API error");
   }
   const b64 = j.b64_json;
   if (!b64) throw new Error("Пустой ответ от ИИ");
