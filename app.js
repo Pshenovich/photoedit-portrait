@@ -8,7 +8,9 @@ import {
   applyAutoEyes,
   applyAutoLip,
   maskValueAt,
+  getLandmarker,
 } from "./engine.js";
+import { applyFaceAdjust } from "./adjustEngine.js";
 
 const fileInput = document.getElementById("fileInput");
 const canvas = document.getElementById("view");
@@ -27,6 +29,9 @@ const autoSkinBtn = document.getElementById("autoSkinBtn");
 const autoEyesBtn = document.getElementById("autoEyesBtn");
 const autoLipsBtn = document.getElementById("autoLipsBtn");
 const viewport = document.getElementById("viewport");
+const applyAdjustBtn = document.getElementById("applyAdjustBtn");
+const resetAdjustSliders = document.getElementById("resetAdjustSliders");
+const adjustPanel = document.getElementById("adjustPanel");
 
 canvas.style.touchAction = "none";
 if (viewport) viewport.style.touchAction = "none";
@@ -52,6 +57,105 @@ let skinMaskAlpha = null;
 let lipMaskCanvas = null;
 /** @type {Uint8ClampedArray | null} */
 let lipMaskAlpha = null;
+
+function setAdjustSlidersEnabled(on) {
+  if (!adjustPanel) return;
+  adjustPanel.querySelectorAll('input[type="range"]').forEach((inp) => {
+    inp.disabled = !on;
+  });
+  if (applyAdjustBtn) applyAdjustBtn.disabled = !on;
+}
+
+const ADJ_KEYS = [
+  "nose_size",
+  "nose_lift",
+  "nose_bridge",
+  "nose_tip",
+  "face_size",
+  "head_narrow",
+  "v_shape",
+  "chin_width",
+  "chin_len",
+  "chin_point",
+  "eye_bags",
+  "eye_lashes",
+  "eye_liner",
+  "eye_brows",
+  "eye_shadow",
+  "teeth_white",
+  "smile",
+  "lip_plump",
+];
+
+function readAdjustParams() {
+  /** @type {Record<string, number>} */
+  const p = {};
+  for (const k of ADJ_KEYS) {
+    const el = document.getElementById(`adj_${k}`);
+    p[k] = el ? Number(el.value) || 0 : 0;
+  }
+  return p;
+}
+
+function hasAdjustParams(p) {
+  return ADJ_KEYS.some((k) => (p[k] || 0) > 0);
+}
+
+function refreshFaceFromCanvas() {
+  if (!canvas.width || !getLandmarker()) return;
+  const det = detectLandmarks(canvas);
+  if (!det || !det.landmarks) return;
+  faceLandmarks = det.landmarks;
+  const w = canvas.width;
+  const h = canvas.height;
+  const skinCv = buildSkinMaskCanvas(faceLandmarks, w, h);
+  skinMaskAlpha = maskAlphaFromCanvas(skinCv);
+  lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
+  lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
+  updateAutoButtonState();
+}
+
+async function onApplyAdjust() {
+  if (!canvas.width || !faceLandmarks) {
+    setStatus("Нужно фото с распознанным лицом.");
+    return;
+  }
+  const p = readAdjustParams();
+  if (!hasAdjustParams(p)) {
+    setStatus("Сдвиньте хотя бы один слайдер коррекции.");
+    return;
+  }
+  setStatus("Коррекции: обработка…");
+  await new Promise((r) => requestAnimationFrame(r));
+  pushUndo();
+  try {
+    const ok = applyFaceAdjust(canvas, ctx, faceLandmarks, p);
+    if (!ok) {
+      popUndo();
+      setStatus("Нет активных коррекций.");
+    } else {
+      refreshFaceFromCanvas();
+      setStatus("Коррекции применены. ↩ — отмена.");
+      setTimeout(() => {
+        if (statusEl && statusEl.textContent.includes("Коррекции применены")) setStatus("");
+      }, 2800);
+    }
+  } catch (e) {
+    console.warn(e);
+    popUndo();
+    setStatus("Ошибка коррекций (попробуйте меньшее фото).");
+  }
+}
+
+if (applyAdjustBtn) applyAdjustBtn.addEventListener("click", () => void onApplyAdjust());
+if (resetAdjustSliders) {
+  resetAdjustSliders.addEventListener("click", () => {
+    for (const k of ADJ_KEYS) {
+      const el = document.getElementById(`adj_${k}`);
+      if (el) el.value = "0";
+    }
+  });
+}
 
 function updateAutoButtonState() {
   const hasImg = !!(canvas && canvas.width && canvas.height);
@@ -174,6 +278,7 @@ async function analyzeFace() {
   lipMaskCanvas = null;
   lipMaskAlpha = null;
   updateAutoButtonState();
+  setAdjustSlidersEnabled(false);
   if (!canvas.width) return;
 
   setStatus("Ищем лицо и строим маски…");
@@ -199,6 +304,7 @@ async function analyzeFace() {
     setStatus("Детектор лица недоступен (сеть/CORS). «Авто кожа» и кисть по всему фото.");
   } finally {
     updateAutoButtonState();
+    setAdjustSlidersEnabled(!!faceLandmarks);
   }
 }
 
@@ -693,4 +799,5 @@ if (viewport) {
 
 syncToolsUI();
 updateAutoButtonState();
+setAdjustSlidersEnabled(!!faceLandmarks);
 setStatus("");

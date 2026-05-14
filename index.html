@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <div class="app">
@@ -59,8 +59,45 @@
           <input type="color" id="lipColor" value="#b8324a" />
         </label>
       </div>
+
+      <div class="adj-panel" id="adjustPanel">
+        <div class="adj-title">Коррекции (нужно лицо)</div>
+        <button type="button" class="btn btn-block" id="applyAdjustBtn" disabled>Применить коррекции</button>
+        <button type="button" class="btn btn-ghost btn-block" id="resetAdjustSliders">Сбросить слайдеры</button>
+
+        <details class="adj-details" open>
+          <summary>Нос</summary>
+          <label class="adj-row"><span>Размер</span><input type="range" id="adj_nose_size" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Поднять</span><input type="range" id="adj_nose_lift" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Спинка</span><input type="range" id="adj_nose_bridge" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Кончик</span><input type="range" id="adj_nose_tip" min="0" max="100" value="0" /></label>
+        </details>
+        <details class="adj-details">
+          <summary>Лицо</summary>
+          <label class="adj-row"><span>Размер</span><input type="range" id="adj_face_size" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Голова</span><input type="range" id="adj_head_narrow" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>V-форма</span><input type="range" id="adj_v_shape" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Подбородок</span><input type="range" id="adj_chin_width" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Длина</span><input type="range" id="adj_chin_len" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Острый</span><input type="range" id="adj_chin_point" min="0" max="100" value="0" /></label>
+        </details>
+        <details class="adj-details">
+          <summary>Глаза</summary>
+          <label class="adj-row"><span>Мешки</span><input type="range" id="adj_eye_bags" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Ресницы</span><input type="range" id="adj_eye_lashes" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Стрелки</span><input type="range" id="adj_eye_liner" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Брови</span><input type="range" id="adj_eye_brows" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Тени</span><input type="range" id="adj_eye_shadow" min="0" max="100" value="0" /></label>
+        </details>
+        <details class="adj-details">
+          <summary>Рот</summary>
+          <label class="adj-row"><span>Зубы</span><input type="range" id="adj_teeth_white" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Улыбка</span><input type="range" id="adj_smile" min="0" max="100" value="0" /></label>
+          <label class="adj-row"><span>Плампер</span><input type="range" id="adj_lip_plump" min="0" max="100" value="0" /></label>
+        </details>
+      </div>
     </footer>
   </div>
-  <script type="module" src="app.js?v=6"></script>
+  <script type="module" src="app.js?v=7"></script>
 </body>
 </html>

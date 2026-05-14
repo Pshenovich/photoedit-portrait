@@ -152,6 +152,71 @@ body {
   font-size: 14px;
 }
 
+.btn-block {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: #4a4a5c;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.adj-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #2a2a34;
+}
+
+.adj-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.adj-details {
+  margin-top: 6px;
+  border: 1px solid #2a2a34;
+  border-radius: 10px;
+  padding: 0 10px 8px;
+  background: #15151a;
+}
+
+.adj-details summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.adj-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.adj-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.adj-row span {
+  flex: 0 0 92px;
+  color: var(--muted);
+}
+
+.adj-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
 .dock {
   flex-shrink: 0;
   max-height: min(48vh, 420px);
