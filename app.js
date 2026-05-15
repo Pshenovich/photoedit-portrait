@@ -4,9 +4,6 @@ import {
   buildSkinMaskCanvas,
   buildLipMaskCanvas,
   maskAlphaFromCanvas,
-  applyAutoSkin,
-  applyAutoEyes,
-  applyAutoLip,
   maskValueAt,
   getLandmarker,
 } from "./engine.js";
@@ -26,20 +23,46 @@ const brushSize = document.getElementById("brushSize");
 const intensity = document.getElementById("intensity");
 const lipColor = document.getElementById("lipColor");
 const lipColorWrap = document.getElementById("lipColorWrap");
-const toolButtons = document.querySelectorAll(".tool");
-const autoSkinBtn = document.getElementById("autoSkinBtn");
-const autoEyesBtn = document.getElementById("autoEyesBtn");
-const autoLipsBtn = document.getElementById("autoLipsBtn");
+const brushPanelHint = document.getElementById("brushPanelHint");
 const viewport = document.getElementById("viewport");
 const resetAdjustSliders = document.getElementById("resetAdjustSliders");
-const adjustPanel = document.getElementById("adjustPanel");
 const resetLightSliders = document.getElementById("resetLightSliders");
 const rotCwBtn = document.getElementById("rotCwBtn");
 const rotCcwBtn = document.getElementById("rotCcwBtn");
 const cometApplyBtn = document.getElementById("cometApplyBtn");
 const cometPrompt = document.getElementById("cometPrompt");
 const cometModel = document.getElementById("cometModel");
-const cometPresets = document.getElementById("cometPresets");
+const cometPresetSelect = document.getElementById("cometPresetSelect");
+const cometPromptRow = document.getElementById("cometPromptRow");
+const dockTabs = document.querySelectorAll(".dock-tab");
+const panelNose = document.getElementById("panelNose");
+const panelFace = document.getElementById("panelFace");
+const panelEyes = document.getElementById("panelEyes");
+const panelMouth = document.getElementById("panelMouth");
+const panelBrush = document.getElementById("panelBrush");
+const panelLight = document.getElementById("panelLight");
+
+const DOCK_PANEL = {
+  nose: panelNose,
+  face: panelFace,
+  eyes: panelEyes,
+  mouth: panelMouth,
+  skin: panelBrush,
+  heal: panelBrush,
+  lip: panelBrush,
+  light: panelLight,
+};
+
+const FACE_DOCK_TABS = new Set(["nose", "face", "eyes", "mouth"]);
+const BRUSH_DOCK = { skin: "smooth", heal: "heal", lip: "lip" };
+const BRUSH_HINTS = {
+  smooth: "Кисть: сглаживание кожи по лицу",
+  heal: "Кисть: точечно убрать прыщи",
+  lip: "Кисть: помада по губам",
+};
+
+/** @type {string | null} */
+let activeDock = null;
 
 canvas.style.touchAction = "none";
 if (viewport) viewport.style.touchAction = "none";
@@ -81,9 +104,73 @@ const LIGHT_DEBOUNCE_MS = 95;
 const FACE_DEBOUNCE_MS = 115;
 
 function setAdjustSlidersEnabled(on) {
-  if (!adjustPanel) return;
-  adjustPanel.querySelectorAll('input[type="range"]').forEach((inp) => {
+  document.querySelectorAll('input[type="range"][id^="adj_"]').forEach((inp) => {
     inp.disabled = !on;
+  });
+}
+
+function hideAllToolPanels() {
+  for (const p of Object.values(DOCK_PANEL)) {
+    if (p) p.classList.add("hidden");
+  }
+}
+
+function showDockPanel(dock) {
+  hideAllToolPanels();
+  const panel = DOCK_PANEL[dock];
+  if (panel) panel.classList.remove("hidden");
+  if (BRUSH_DOCK[dock]) {
+    tool = BRUSH_DOCK[dock];
+    if (brushPanelHint) brushPanelHint.textContent = BRUSH_HINTS[tool] || "";
+    if (lipColorWrap) lipColorWrap.classList.toggle("hidden", tool !== "lip");
+  } else if (lipColorWrap) {
+    lipColorWrap.classList.add("hidden");
+  }
+}
+
+function setActiveDock(dock) {
+  if (activeDock === dock) {
+    activeDock = null;
+    dockTabs.forEach((btn) => {
+      btn.classList.remove("active");
+      btn.setAttribute("aria-pressed", "false");
+    });
+    hideAllToolPanels();
+    return;
+  }
+  activeDock = dock;
+  dockTabs.forEach((btn) => {
+    const id = btn.getAttribute("data-dock");
+    const on = id === dock;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  showDockPanel(dock);
+}
+
+function bindDockTabs() {
+  dockTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      const dock = btn.getAttribute("data-dock");
+      if (dock) setActiveDock(dock);
+    });
+  });
+}
+
+function bindCometSelect() {
+  if (!cometPresetSelect) return;
+  cometPresetSelect.addEventListener("change", () => {
+    const key = cometPresetSelect.value;
+    if (!key) {
+      if (cometPromptRow) cometPromptRow.classList.add("hidden");
+      return;
+    }
+    if (cometPromptRow) cometPromptRow.classList.remove("hidden");
+    if (cometPrompt) {
+      const text = getCometPresetPrompt(key);
+      if (text) cometPrompt.value = text;
+    }
   });
 }
 
@@ -207,7 +294,7 @@ function runFaceAdjustLive() {
         faceAdjustBaseImageData = null;
         faceAdjustBaseLandmarks = null;
         lightPipelineBase = null;
-        updateAutoButtonState();
+        updateDockState();
       }
       return;
     }
@@ -256,10 +343,15 @@ function resetAdjustSlidersUI() {
 }
 
 function bindLiveAdjustSliders() {
-  const lightPanel = document.getElementById("lightPanel");
-  const panels = [lightPanel, adjustPanel].filter(Boolean);
+  const sliderPanels = [
+    panelNose,
+    panelFace,
+    panelEyes,
+    panelMouth,
+    panelLight,
+  ].filter(Boolean);
 
-  for (const panel of panels) {
+  for (const panel of sliderPanels) {
     panel.addEventListener(
       "pointerdown",
       (e) => {
@@ -305,23 +397,21 @@ function bindLiveAdjustSliders() {
 
   const keyNav = (e) => {
     if (!(e.target instanceof HTMLInputElement) || e.target.type !== "range") return;
-    if (!panels.some((p) => p.contains(e.target))) return;
+    if (!sliderPanels.some((p) => p.contains(e.target))) return;
     const nav = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"];
     if (!nav.includes(e.key) || e.repeat) return;
     if (rangeGesturePointerId == null) ensureSliderGestureUndo();
   };
   document.addEventListener("keydown", keyNav, true);
 
-  if (lightPanel) {
-    lightPanel.querySelectorAll('input[type="range"]').forEach((el) => {
+  if (panelLight) {
+    panelLight.querySelectorAll('input[type="range"]').forEach((el) => {
       el.addEventListener("input", () => scheduleLightApply());
     });
   }
-  if (adjustPanel) {
-    adjustPanel.querySelectorAll('input[type="range"]').forEach((el) => {
-      el.addEventListener("input", () => scheduleFaceAdjustApply());
-    });
-  }
+  document.querySelectorAll('input[type="range"][id^="adj_"]').forEach((el) => {
+    el.addEventListener("input", () => scheduleFaceAdjustApply());
+  });
 }
 
 function refreshFaceFromCanvas() {
@@ -335,7 +425,7 @@ function refreshFaceFromCanvas() {
   skinMaskAlpha = maskAlphaFromCanvas(skinCv);
   lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
   lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
-  updateAutoButtonState();
+  updateDockState();
 }
 
 if (resetAdjustSliders) {
@@ -427,15 +517,6 @@ if (resetLightSliders) {
 if (rotCwBtn) rotCwBtn.addEventListener("click", () => void onRotate(true));
 if (rotCcwBtn) rotCcwBtn.addEventListener("click", () => void onRotate(false));
 if (cometApplyBtn) cometApplyBtn.addEventListener("click", () => void onCometApply());
-if (cometPresets) {
-  cometPresets.addEventListener("click", (e) => {
-    const btn = e.target && e.target.closest && e.target.closest("[data-comet]");
-    if (!btn || !cometPrompt) return;
-    const key = btn.getAttribute("data-comet");
-    const text = key ? getCometPresetPrompt(key) : "";
-    if (text) cometPrompt.value = text;
-  });
-}
 
 function readLightParams() {
   return {
@@ -459,27 +540,53 @@ function hasLightEffect(p) {
   );
 }
 
-function updateAutoButtonState() {
+function updateDockState() {
   const hasImg = !!(canvas && canvas.width && canvas.height);
-  if (autoSkinBtn) autoSkinBtn.disabled = !hasImg;
-  if (autoEyesBtn) autoEyesBtn.disabled = !hasImg || !faceLandmarks;
-  if (autoLipsBtn) autoLipsBtn.disabled = !hasImg || !lipMaskCanvas;
+  const hasFace = !!faceLandmarks;
+
+  if (cometPresetSelect) cometPresetSelect.disabled = !hasImg;
+  if (cometApplyBtn) cometApplyBtn.disabled = !hasImg;
+  if (cometPrompt) cometPrompt.disabled = !hasImg;
+  if (cometModel) cometModel.disabled = !hasImg;
   if (resetLightSliders) resetLightSliders.disabled = !hasImg;
+  if (resetAdjustSliders) resetAdjustSliders.disabled = !hasFace;
   if (rotCwBtn) rotCwBtn.disabled = !hasImg;
   if (rotCcwBtn) rotCcwBtn.disabled = !hasImg;
-  if (cometApplyBtn) cometApplyBtn.disabled = !hasImg;
-  const lp = document.getElementById("lightPanel");
-  if (lp) {
-    lp.querySelectorAll('input[type="range"]').forEach((inp) => {
+
+  if (panelLight) {
+    panelLight.querySelectorAll('input[type="range"]').forEach((inp) => {
       inp.disabled = !hasImg;
     });
   }
-  if (cometPrompt) cometPrompt.disabled = !hasImg;
-  if (cometModel) cometModel.disabled = !hasImg;
-  if (cometPresets) {
-    cometPresets.querySelectorAll("button[data-comet]").forEach((b) => {
-      b.disabled = !hasImg;
+
+  dockTabs.forEach((btn) => {
+    const dock = btn.getAttribute("data-dock");
+    if (!dock) return;
+    if (!hasImg) {
+      btn.disabled = true;
+      return;
+    }
+    if (FACE_DOCK_TABS.has(dock)) {
+      btn.disabled = !hasFace;
+    } else {
+      btn.disabled = false;
+    }
+  });
+
+  if (!hasImg && activeDock) {
+    activeDock = null;
+    dockTabs.forEach((btn) => {
+      btn.classList.remove("active");
+      btn.setAttribute("aria-pressed", "false");
     });
+    hideAllToolPanels();
+  } else if (hasImg && !hasFace && activeDock && FACE_DOCK_TABS.has(activeDock)) {
+    activeDock = null;
+    dockTabs.forEach((btn) => {
+      btn.classList.remove("active");
+      btn.setAttribute("aria-pressed", "false");
+    });
+    hideAllToolPanels();
   }
 }
 
@@ -511,29 +618,12 @@ function popUndo() {
   undoBtn.disabled = undoStack.length === 0;
   invalidateAdjustBases();
   if (getLandmarker()) void refreshFaceFromCanvas();
-  updateAutoButtonState();
+  updateDockState();
 }
 
 function setHintVisible(v) {
   hint.classList.toggle("hidden", !v);
 }
-
-function syncToolsUI() {
-  toolButtons.forEach((btn) => {
-    const t = btn.getAttribute("data-tool");
-    const on = t === tool;
-    btn.classList.toggle("active", on);
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
-  });
-  lipColorWrap.classList.toggle("hidden", tool !== "lip");
-}
-
-toolButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    tool = btn.getAttribute("data-tool") || "smooth";
-    syncToolsUI();
-  });
-});
 
 undoBtn.addEventListener("click", () => popUndo());
 
@@ -600,7 +690,7 @@ function fitImageToCanvas(src) {
   resetLightSlidersUI();
   resetAdjustSlidersUI();
   setHintVisible(false);
-  updateAutoButtonState();
+  updateDockState();
 }
 
 async function analyzeFace() {
@@ -608,7 +698,7 @@ async function analyzeFace() {
   skinMaskAlpha = null;
   lipMaskCanvas = null;
   lipMaskAlpha = null;
-  updateAutoButtonState();
+  updateDockState();
   setAdjustSlidersEnabled(false);
   if (!canvas.width) return;
 
@@ -629,19 +719,19 @@ async function analyzeFace() {
       skinMaskAlpha = maskAlphaFromCanvas(skinCv);
       lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
       lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
-      setStatus("Лицо найдено: «Авто» и кисть «Кожа» только по коже лица.");
+      setStatus("Лицо найдено — доступны коррекции носа, лица, глаз и рта.");
     } else {
       setStatus(
-        "Лицо не найдено. Попробуйте фронтальный портрет, лицо крупнее в кадре, ровный свет; на iPhone лучше JPEG из «Фото»."
+        "Лицо не найдено. Коррекции лица недоступны; кисть «Кожа» и «Свет» работают. Попробуйте крупнее лицо в кадре."
       );
       lipMaskAlpha = null;
     }
   } catch (e) {
     console.warn(e);
     lipMaskAlpha = null;
-    setStatus("Детектор лица недоступен (сеть/CORS). «Авто кожа» и кисть по всему фото.");
+    setStatus("Детектор лица недоступен. Кисти и свет работают без масок лица.");
   } finally {
-    updateAutoButtonState();
+    updateDockState();
     setAdjustSlidersEnabled(!!faceLandmarks);
   }
 }
@@ -694,68 +784,6 @@ fileInput.addEventListener("change", async (e) => {
 function getIntensity() {
   return Number(intensity.value) / 100;
 }
-
-function fullSkinMaskAlpha() {
-  const w = canvas.width;
-  const h = canvas.height;
-  const a = new Uint8ClampedArray(w * h);
-  a.fill(255);
-  return a;
-}
-
-/** Если маска кожи пустая/битая — иначе «Авто кожа» визуально «ничего». */
-function effectiveSkinMaskForAuto() {
-  const w = canvas.width;
-  const h = canvas.height;
-  const n = w * h;
-  const full = fullSkinMaskAlpha();
-  if (!skinMaskAlpha || skinMaskAlpha.length !== n) return full;
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += skinMaskAlpha[i];
-  const mean = sum / (n * 255);
-  if (mean < 0.04) return full;
-  return skinMaskAlpha;
-}
-
-async function autoSkin() {
-  if (!canvas.width) return;
-  setStatus("Авто кожа: обработка…");
-  await new Promise((r) => requestAnimationFrame(r));
-  const mask = effectiveSkinMaskForAuto();
-  try {
-    pushUndo();
-    applyAutoSkin(canvas, mask, getIntensity() * 0.92, {
-      fine: 4 + getIntensity() * 2,
-      coarse: 11 + getIntensity() * 10,
-    });
-    invalidateAdjustBases();
-    setStatus("Кожа обновлена. ↩ — отмена.");
-    setTimeout(() => {
-      if (statusEl && statusEl.textContent.includes("Кожа обновлена")) setStatus("");
-    }, 2800);
-  } catch (e) {
-    console.warn("autoSkin", e);
-    setStatus("Не удалось обработать (память/размер). Попробуйте меньшее фото.");
-  }
-}
-
-function autoEyes() {
-  if (!canvas.width || !faceLandmarks) return;
-  pushUndo();
-  applyAutoEyes(canvas, faceLandmarks, getIntensity() * 0.95);
-  invalidateAdjustBases();
-}
-
-function autoLips() {
-  if (!canvas.width || !lipMaskCanvas) return;
-  pushUndo();
-  applyAutoLip(canvas, lipMaskCanvas, lipColor.value, getIntensity() * 0.88);
-  invalidateAdjustBases();
-}
-
-if (autoSkinBtn) autoSkinBtn.addEventListener("click", () => void autoSkin());
-if (autoEyesBtn) autoEyesBtn.addEventListener("click", autoEyes);
-if (autoLipsBtn) autoLipsBtn.addEventListener("click", autoLips);
 
 function canvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -1175,8 +1203,10 @@ if (viewport) {
   });
 }
 
-syncToolsUI();
+hideAllToolPanels();
+bindDockTabs();
+bindCometSelect();
 bindLiveAdjustSliders();
-updateAutoButtonState();
+updateDockState();
 setAdjustSlidersEnabled(!!faceLandmarks);
 setStatus("");

@@ -138,18 +138,114 @@ body {
   line-height: 1.35;
 }
 
-.auto-row {
+.dock-level {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #2a2a34;
+}
+
+.dock-level:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.dock-select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #3a3a48;
+  background: #25252f;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238b8b9a' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 36px;
+}
+
+.comet-prompt-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  margin-top: 10px;
+}
+
+.comet-prompt-row textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #3a3a48;
+  background: #15151a;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.btn-apply {
+  flex-shrink: 0;
+  align-self: stretch;
+  padding: 10px 16px;
+  border-color: var(--accent);
+  background: #2a3150;
+  color: #dbe4ff;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dock-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
-.btn-auto {
-  flex: 1;
-  min-width: 92px;
-  padding: 11px 10px;
-  font-size: 14px;
+.dock-tab {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid #3a3a48;
+  background: #25252f;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dock-tab.active {
+  border-color: var(--accent);
+  background: #2a3150;
+  color: #dbe4ff;
+}
+
+.dock-tab:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.tool-panel {
+  padding: 4px 0 8px;
+}
+
+.tool-panel.hidden {
+  display: none !important;
+}
+
+.panel-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.dock-level-rotate .adj-title {
+  margin-bottom: 10px;
 }
 
 .btn-block {
