@@ -12,22 +12,25 @@
 
 Оба варианта отдают тот же `index.html` по HTTPS.
 
-## Авто-деплой Vercel из GitHub
+## Авто-деплой Vercel (прод)
 
-Первый выклад на Vercel с этой машины прошёл под аккаунтом Vercel **`knazorlov-6551`**, поэтому **привязка GitHub → Vercel** к репозиторию `Pshenovich/photoedit-portrait` не установилась (нет доступа этого Vercel-пользователя к чужому репо).
+Каждый **`git push` в `main`** запускает GitHub Actions [`.github/workflows/deploy-production.yml`](.github/workflows/deploy-production.yml) и выкладывает на **https://photoedit-portrait.vercel.app**.
 
-Чтобы каждый `git push` в `main` сам обновлял прод на Vercel:
+Секреты в репозитории: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
 
-1. Войдите на [vercel.com](https://vercel.com) под GitHub-аккаунтом **Pshenovich** (или добавьте Vercel GitHub App к репозиторию).
-2. **Add New Project** → импортируйте `Pshenovich/photoedit-portrait`.
-3. Preset **Other**, без build-команды, корень проекта — `/`.
-
-Либо оставьте текущий прод на `photoedit-portrait.vercel.app` и обновляйте его командой с машины, где настроен `vercel login`:
+Ручной прод с машины (если CI не нужен):
 
 ```bash
-cd /path/to/PhotoEdit
-NPM_CONFIG_CACHE=/tmp/npm-cache-photoedit npx vercel@latest deploy --prod --yes --name photoedit-portrait
+./scripts/deploy-prod.sh
 ```
+
+Или вручную:
+
+```bash
+NPM_CONFIG_CACHE=/tmp/npm-cache-photoedit npx vercel@latest deploy --prod --yes
+```
+
+Проект Vercel: `knazorlov-6551s-projects/photoedit-portrait` (аккаунт CLI на этой машине).
 
 ## GitHub Pages
 
