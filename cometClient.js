@@ -15,9 +15,9 @@ const COMET_PRESETS = {
   teeth_smile:
     "Naturally whiten visible teeth slightly and gently enhance smile lines if any. Realistic, not exaggerated.",
   hair_shine:
-    "Add natural healthy shine to hair, slightly improve separation from background. Do not change hair color drastically. Subtle and realistic.",
+    "ONLY enhance hair: add natural healthy shine and subtle highlight on hair strands. Do NOT change skin, face, eyes, lips, clothes, or background. Preserve exact hair color and hairstyle. Photorealistic.",
   bg_soft:
-    "Slightly soften and darken only the background blur while keeping the subject face and body sharp. Natural depth of field look.",
+    "ONLY soften and blur the background. Keep the entire person (face, hair, body, clothes) perfectly sharp and unchanged. Natural depth-of-field; no relighting on subject. Photorealistic.",
 };
 
 export function getCometPresetKeys() {

@@ -126,6 +126,48 @@ export function rotateCanvas90CW(canvas, ctx) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
+/**
+ * Blur background using mask (255 = background), composite subject sharp.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {HTMLCanvasElement} canvas
+ * @param {Uint8ClampedArray} bgMask
+ * @param {number} amount 0..100
+ */
+export function applyBackgroundBlur(ctx, canvas, bgMask, amount) {
+  if (!bgMask || amount <= 0) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  const blurPx = 2 + (amount / 100) * 22;
+  const orig = ctx.getImageData(0, 0, w, h);
+
+  const src = document.createElement("canvas");
+  src.width = w;
+  src.height = h;
+  src.getContext("2d").putImageData(orig, 0, 0);
+
+  const blurred = document.createElement("canvas");
+  blurred.width = w;
+  blurred.height = h;
+  const bc = blurred.getContext("2d");
+  try {
+    bc.filter = `blur(${blurPx}px)`;
+    bc.drawImage(src, 0, 0);
+  } catch (_) {
+    bc.drawImage(src, 0, 0);
+  }
+  bc.filter = "none";
+  const bd = bc.getImageData(0, 0, w, h).data;
+  const od = orig.data;
+  const str = amount / 100;
+  for (let i = 0, p = 0; p < w * h; p++, i += 4) {
+    const m = (bgMask[p] / 255) * str;
+    od[i] = od[i] * (1 - m) + bd[i] * m;
+    od[i + 1] = od[i + 1] * (1 - m) + bd[i + 1] * m;
+    od[i + 2] = od[i + 2] * (1 - m) + bd[i + 2] * m;
+  }
+  ctx.putImageData(orig, 0, 0);
+}
+
 /** Против часовой */
 export function rotateCanvas90CCW(canvas, ctx) {
   const w = canvas.width;

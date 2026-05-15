@@ -33,3 +33,16 @@ export const LEFT_BROW_INDICES = [276, 283, 282, 295, 285, 300, 293, 334, 296, 3
 
 /** Right eyebrow. */
 export const RIGHT_BROW_INDICES = [46, 53, 52, 65, 55, 70, 63, 105, 66, 107];
+
+/** Iris ring (478-pt mesh); fallback to eye hull if missing. */
+export const LEFT_IRIS_INDICES = [468, 469, 470, 471, 472];
+export const RIGHT_IRIS_INDICES = [473, 474, 475, 476, 477];
+
+/** Cheek blush zones (approximate). */
+export const LEFT_CHEEK_INDICES = [116, 123, 147, 187, 205, 36, 142, 126];
+export const RIGHT_CHEEK_INDICES = [345, 352, 376, 411, 425, 266, 371, 355];
+
+/** Inner mouth for teeth mask base. */
+export const MOUTH_INNER_INDICES = [
+  78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191,
+];

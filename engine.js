@@ -12,10 +12,32 @@ import {
   LEFT_BROW_INDICES,
   RIGHT_BROW_INDICES,
 } from "./landmarkPaths.js";
+import {
+  buildTeethMaskCanvas,
+  buildIrisMaskCanvas,
+  buildScleraMaskCanvas,
+  buildCheekMaskCanvas,
+} from "./segmentMasks.js";
+
+const VISION_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const WASM_ROOT = `${VISION_CDN}/wasm`;
 
 /** @type {import('@mediapipe/tasks-vision').FaceLandmarker | null} */
 let landmarker = null;
 let landmarkerPromise = null;
+
+/** @type {import('@mediapipe/tasks-vision').ImageSegmenter | null} */
+let imageSegmenter = null;
+let segmenterPromise = null;
+
+export function getImageSegmenter() {
+  return imageSegmenter;
+}
+
+export function isMobileUA() {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+  return /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
+}
 
 export function getLandmarker() {
   return landmarker;
@@ -35,13 +57,9 @@ export async function ensureFaceLandmarker() {
   }
   landmarkerPromise = (async () => {
     try {
-      const vision = await import(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
-      );
+      const vision = await import(`${VISION_CDN}/vision_bundle.mjs`);
       const { FaceLandmarker, FilesetResolver } = vision;
-      const fileset = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-      );
+      const fileset = await FilesetResolver.forVisionTasks(WASM_ROOT);
       const modelAssetPath =
         "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
@@ -54,10 +72,7 @@ export async function ensureFaceLandmarker() {
         outputFacialTransformationMatrixes: false,
       };
 
-      const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
-      const isMobile = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
-
-      const tryOrder = isMobile
+      const tryOrder = isMobileUA()
         ? [{ delegate: "CPU" }, { delegate: "GPU" }, {}]
         : [{ delegate: "GPU" }, { delegate: "CPU" }, {}];
 
@@ -84,6 +99,160 @@ export async function ensureFaceLandmarker() {
     }
   })();
   return landmarkerPromise;
+}
+
+/**
+ * Selfie multiclass: 0=bg, 1=hair, 2=body-skin, 3=face-skin, 4=clothes, 5=others
+ * @returns {Promise<import('@mediapipe/tasks-vision').ImageSegmenter>}
+ */
+export async function ensureImageSegmenter() {
+  if (imageSegmenter) return imageSegmenter;
+  if (segmenterPromise) {
+    try {
+      return await segmenterPromise;
+    } catch {
+      segmenterPromise = null;
+    }
+  }
+  segmenterPromise = (async () => {
+    const vision = await import(`${VISION_CDN}/vision_bundle.mjs`);
+    const { ImageSegmenter, FilesetResolver } = vision;
+    const fileset = await FilesetResolver.forVisionTasks(WASM_ROOT);
+    const modelAssetPath =
+      "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
+    const tryOrder = isMobileUA()
+      ? [{ delegate: "CPU" }, { delegate: "GPU" }, {}]
+      : [{ delegate: "GPU" }, { delegate: "CPU" }, {}];
+    let lastErr = null;
+    for (const del of tryOrder) {
+      try {
+        imageSegmenter = await ImageSegmenter.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath, ...del },
+          runningMode: "IMAGE",
+          outputCategoryMask: true,
+          outputConfidenceMasks: false,
+        });
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        imageSegmenter = null;
+      }
+    }
+    if (!imageSegmenter && lastErr) throw lastErr;
+    return imageSegmenter;
+  })();
+  return segmenterPromise;
+}
+
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @returns {{ hair: Uint8ClampedArray, background: Uint8ClampedArray } | null}
+ */
+export function buildSegmentationMasks(canvas) {
+  if (!imageSegmenter) return null;
+  const w = canvas.width;
+  const h = canvas.height;
+  let result;
+  try {
+    result = imageSegmenter.segment(canvas);
+  } catch {
+    return null;
+  }
+  const cat = result.categoryMask;
+  if (!cat) return null;
+  let mask;
+  try {
+    if (typeof cat.getAsUint8Array === "function") {
+      mask = cat.getAsUint8Array();
+    } else if (cat instanceof Uint8ClampedArray || cat instanceof Uint8Array) {
+      mask = cat;
+    } else {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const len = w * h;
+  if (mask.length < len) return null;
+  const hair = new Uint8ClampedArray(len);
+  const background = new Uint8ClampedArray(len);
+  for (let i = 0; i < len; i++) {
+    const c = mask[i];
+    hair[i] = c === 1 ? 255 : 0;
+    background[i] = c === 0 ? 255 : 0;
+  }
+  return { hair, background };
+}
+
+/**
+ * @typedef {Object} FaceMaskBundle
+ * @property {Uint8ClampedArray} skin
+ * @property {HTMLCanvasElement} lip
+ * @property {Uint8ClampedArray} lipAlpha
+ * @property {HTMLCanvasElement} teeth
+ * @property {Uint8ClampedArray} teethAlpha
+ * @property {HTMLCanvasElement} leftIris
+ * @property {HTMLCanvasElement} rightIris
+ * @property {HTMLCanvasElement} leftSclera
+ * @property {HTMLCanvasElement} rightSclera
+ * @property {Uint8ClampedArray} leftIrisAlpha
+ * @property {Uint8ClampedArray} rightIrisAlpha
+ * @property {Uint8ClampedArray} leftScleraAlpha
+ * @property {Uint8ClampedArray} rightScleraAlpha
+ * @property {HTMLCanvasElement} cheeks
+ * @property {Uint8ClampedArray} cheeksAlpha
+ * @property {Uint8ClampedArray | null} hair
+ * @property {Uint8ClampedArray | null} background
+ */
+
+/**
+ * @param {Array<{x:number,y:number,z?:number}>} lm
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ withSegmentation?: boolean }} opts
+ * @returns {FaceMaskBundle}
+ */
+export function buildFaceMaskBundle(lm, canvas, opts = {}) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const skinCv = buildSkinMaskCanvas(lm, w, h);
+  const lipCv = buildLipMaskCanvas(lm, w, h);
+  const teethCv = buildTeethMaskCanvas(lm, w, h, canvas);
+  const leftIris = buildIrisMaskCanvas(lm, w, h, "left");
+  const rightIris = buildIrisMaskCanvas(lm, w, h, "right");
+  const leftSclera = buildScleraMaskCanvas(lm, w, h, "left");
+  const rightSclera = buildScleraMaskCanvas(lm, w, h, "right");
+  const cheeks = buildCheekMaskCanvas(lm, w, h);
+
+  let hair = null;
+  let background = null;
+  if (opts.withSegmentation !== false && imageSegmenter) {
+    const seg = buildSegmentationMasks(canvas);
+    if (seg) {
+      hair = seg.hair;
+      background = seg.background;
+    }
+  }
+
+  return {
+    skin: maskAlphaFromCanvas(skinCv),
+    lip: lipCv,
+    lipAlpha: maskAlphaFromCanvas(lipCv),
+    teeth: teethCv,
+    teethAlpha: maskAlphaFromCanvas(teethCv),
+    leftIris,
+    rightIris,
+    leftSclera,
+    rightSclera,
+    leftIrisAlpha: maskAlphaFromCanvas(leftIris),
+    rightIrisAlpha: maskAlphaFromCanvas(rightIris),
+    leftScleraAlpha: maskAlphaFromCanvas(leftSclera),
+    rightScleraAlpha: maskAlphaFromCanvas(rightSclera),
+    cheeks,
+    cheeksAlpha: maskAlphaFromCanvas(cheeks),
+    hair,
+    background,
+  };
 }
 
 function pickBestFace(faces) {
@@ -585,4 +754,238 @@ export function maskValueAt(w, h, x, y, maskAlpha) {
   const iy = Math.floor(y);
   if (ix < 0 || iy < 0 || ix >= w || iy >= h) return 0;
   return maskAlpha[iy * w + ix] / 255;
+}
+
+/**
+ * Even skin tone + reduce redness in skin mask.
+ */
+export function applySkinTone(workCanvas, skinMask, strength) {
+  if (strength <= 0) return;
+  const w = workCanvas.width;
+  const h = workCanvas.height;
+  const ctx = workCanvas.getContext("2d");
+  const orig = ctx.getImageData(0, 0, w, h);
+  const od = orig.data;
+  const out = new ImageData(w, h);
+  const d = out.data;
+  let pi = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ma = (skinMask[y * w + x] / 255) * strength;
+      let r = od[pi];
+      let g = od[pi + 1];
+      let b = od[pi + 2];
+      const L = 0.299 * r + 0.587 * g + 0.114 * b;
+      const avg = (r + g + b) / 3;
+      r += (avg - r) * 0.22 * ma;
+      g += (avg - g) * 0.22 * ma;
+      b += (avg - b) * 0.18 * ma;
+      const redExcess = Math.max(0, r - (g + b) * 0.52);
+      r -= redExcess * 0.35 * ma;
+      g += redExcess * 0.08 * ma;
+      const lift = (128 - L) * 0.06 * ma;
+      r += lift;
+      g += lift;
+      b += lift;
+      d[pi] = clamp(r, 0, 255);
+      d[pi + 1] = clamp(g, 0, 255);
+      d[pi + 2] = clamp(b, 0, 255);
+      d[pi + 3] = od[pi + 3];
+      pi += 4;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+/**
+ * Brighten iris regions.
+ */
+export function applyIrisBright(workCanvas, leftAlpha, rightAlpha, strength) {
+  if (strength <= 0) return;
+  applyMaskedLift(workCanvas, leftAlpha, strength, { sat: 1.12, lift: 14 });
+  applyMaskedLift(workCanvas, rightAlpha, strength, { sat: 1.12, lift: 14 });
+}
+
+/**
+ * Whiten sclera (desaturate + lift).
+ */
+export function applyScleraWhiten(workCanvas, leftAlpha, rightAlpha, strength) {
+  if (strength <= 0) return;
+  applyMaskedLift(workCanvas, leftAlpha, strength, { sat: 0.82, lift: 18, blueCut: 4 });
+  applyMaskedLift(workCanvas, rightAlpha, strength, { sat: 0.82, lift: 18, blueCut: 4 });
+}
+
+function applyMaskedLift(workCanvas, maskAlpha, strength, { sat = 1, lift = 12, blueCut = 0 }) {
+  const w = workCanvas.width;
+  const h = workCanvas.height;
+  const ctx = workCanvas.getContext("2d");
+  const orig = ctx.getImageData(0, 0, w, h);
+  const od = orig.data;
+  const out = new ImageData(w, h);
+  const d = out.data;
+  let pi = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ma = (maskAlpha[y * w + x] / 255) * strength;
+      let r = od[pi];
+      let g = od[pi + 1];
+      let b = od[pi + 2];
+      const L = 0.299 * r + 0.587 * g + 0.114 * b;
+      r += lift * ma;
+      g += lift * 0.98 * ma;
+      b += (lift * 0.9 - blueCut) * ma;
+      r = L + (r - L) * (1 + (sat - 1) * ma);
+      g = L + (g - L) * (1 + (sat - 1) * ma);
+      b = L + (b - L) * (1 + (sat - 1) * ma);
+      d[pi] = clamp(r, 0, 255);
+      d[pi + 1] = clamp(g, 0, 255);
+      d[pi + 2] = clamp(b, 0, 255);
+      d[pi + 3] = od[pi + 3];
+      pi += 4;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+/**
+ * Teeth whitening using teeth mask.
+ */
+export function applyTeethWhite(workCanvas, teethAlpha, strength) {
+  if (strength <= 0) return;
+  const w = workCanvas.width;
+  const h = workCanvas.height;
+  const ctx = workCanvas.getContext("2d");
+  const orig = ctx.getImageData(0, 0, w, h);
+  const od = orig.data;
+  const out = new ImageData(w, h);
+  const d = out.data;
+  const str = strength * 0.65;
+  let pi = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ma = (teethAlpha[y * w + x] / 255) * str;
+      let r = od[pi];
+      let g = od[pi + 1];
+      let b = od[pi + 2];
+      const L = 0.299 * r + 0.587 * g + 0.114 * b;
+      const lift = (255 - L) * 0.35 * ma + 22 * ma;
+      r += lift;
+      g += lift * 0.98;
+      b += lift * 0.92;
+      const sat = 1 - 0.25 * ma;
+      r = L + (r - L) * sat;
+      g = L + (g - L) * sat;
+      b = L + (b - L) * sat;
+      d[pi] = clamp(r, 0, 255);
+      d[pi + 1] = clamp(g, 0, 255);
+      d[pi + 2] = clamp(b, 0, 255);
+      d[pi + 3] = od[pi + 3];
+      pi += 4;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+/**
+ * Natural shine in hair mask.
+ */
+export function applyHairShineLocal(workCanvas, hairMask, strength) {
+  if (!hairMask || strength <= 0) return;
+  const w = workCanvas.width;
+  const h = workCanvas.height;
+  const ctx = workCanvas.getContext("2d");
+  const orig = ctx.getImageData(0, 0, w, h);
+  const blurred = blurCanvasToImageData(workCanvas, 1.2);
+  const bd = blurred.data;
+  const od = orig.data;
+  const out = new ImageData(w, h);
+  const d = out.data;
+  const str = strength * 0.55;
+  let pi = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ma = (hairMask[y * w + x] / 255) * str;
+      let r = od[pi];
+      let g = od[pi + 1];
+      let b = od[pi + 2];
+      const L = 0.299 * r + 0.587 * g + 0.114 * b;
+      const lift = 12 * ma;
+      const sharp = (od[pi] - bd[pi]) * 0.35 * ma;
+      r += lift + sharp;
+      g += lift * 0.98 + (od[pi + 1] - bd[pi + 1]) * 0.35 * ma;
+      b += lift * 0.95 + (od[pi + 2] - bd[pi + 2]) * 0.35 * ma;
+      const sat = 1 + 0.08 * ma;
+      r = L + (r - L) * sat;
+      g = L + (g - L) * sat;
+      b = L + (b - L) * sat;
+      d[pi] = clamp(r, 0, 255);
+      d[pi + 1] = clamp(g, 0, 255);
+      d[pi + 2] = clamp(b, 0, 255);
+      d[pi + 3] = od[pi + 3];
+      pi += 4;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+/**
+ * Local frequency separation in brush disk.
+ */
+export function applyLocalSkinSmooth(workCanvas, cx, cy, radius, skinMask, strength, sigmas = {}) {
+  const w = workCanvas.width;
+  const h = workCanvas.height;
+  const x0 = Math.max(0, Math.floor(cx - radius));
+  const y0 = Math.max(0, Math.floor(cy - radius));
+  const x1 = Math.min(w, Math.ceil(cx + radius));
+  const y1 = Math.min(h, Math.ceil(cy + radius));
+  const rw = x1 - x0;
+  const rh = y1 - y0;
+  if (rw < 2 || rh < 2) return;
+
+  const patch = document.createElement("canvas");
+  patch.width = rw;
+  patch.height = rh;
+  patch.getContext("2d").drawImage(workCanvas, x0, y0, rw, rh, 0, 0, rw, rh);
+
+  const fine = sigmas.fine ?? 3;
+  const coarse = sigmas.coarse ?? 10;
+  const lowFine = blurCanvasToImageData(patch, fine);
+  const t2 = document.createElement("canvas");
+  t2.width = rw;
+  t2.height = rh;
+  t2.getContext("2d").putImageData(lowFine, 0, 0);
+  const lowSmooth = blurCanvasToImageData(t2, coarse);
+
+  const ctx = workCanvas.getContext("2d");
+  const orig = ctx.getImageData(x0, y0, rw, rh);
+  const lf = lowFine.data;
+  const ls = lowSmooth.data;
+  const o = orig.data;
+  const r2 = radius * radius;
+
+  for (let py = 0; py < rh; py++) {
+    for (let px = 0; px < rw; px++) {
+      const gx = x0 + px;
+      const gy = y0 + py;
+      const dist2 = (gx - cx) ** 2 + (gy - cy) ** 2;
+      if (dist2 > r2) continue;
+      let ma = strength * (1 - dist2 / r2);
+      ma *= ma * (3 - 2 * ma);
+      if (skinMask) {
+        ma *= 0.15 + 0.85 * (skinMask[gy * w + gx] / 255);
+      }
+      if (ma < 0.02) continue;
+      const i = (py * rw + px) * 4;
+      const hf0 = o[i] - lf[i];
+      const hf1 = o[i + 1] - lf[i + 1];
+      const hf2 = o[i + 2] - lf[i + 2];
+      const nr = clamp(ls[i] + hf0, 0, 255);
+      const ng = clamp(ls[i + 1] + hf1, 0, 255);
+      const nb = clamp(ls[i + 2] + hf2, 0, 255);
+      o[i] = o[i] * (1 - ma) + nr * ma;
+      o[i + 1] = o[i + 1] * (1 - ma) + ng * ma;
+      o[i + 2] = o[i + 2] * (1 - ma) + nb * ma;
+    }
+  }
+  ctx.putImageData(orig, x0, y0);
 }

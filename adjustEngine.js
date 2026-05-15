@@ -3,17 +3,25 @@
  * Упрощённые аналоги FaceTune — без 3D-модели.
  */
 
-import { lmPx, convexHull, applyAutoEyes } from "./engine.js";
+import {
+  lmPx,
+  convexHull,
+  applyAutoEyes,
+  applyAutoLip,
+  applyIrisBright,
+  applyScleraWhiten,
+  applyTeethWhite,
+} from "./engine.js";
+import { applyMakeup } from "./makeupEngine.js";
 import {
   FACE_OVAL_INDICES,
   LEFT_EYE_INDICES,
   RIGHT_EYE_INDICES,
   LEFT_BROW_INDICES,
   RIGHT_BROW_INDICES,
-  INNER_LIP_INDICES,
 } from "./landmarkPaths.js";
 
-/** @typedef {{ nose_size: number, nose_lift: number, nose_bridge: number, nose_tip: number, face_size: number, head_narrow: number, v_shape: number, chin_width: number, chin_len: number, chin_point: number, eye_bags: number, eye_lashes: number, eye_liner: number, eye_brows: number, eye_shadow: number, teeth_white: number, smile: number, lip_plump: number }} AdjustParams */
+/** @typedef {Record<string, number>} AdjustParams */
 
 /** @returns {AdjustParams} */
 export function defaultAdjustParams() {
@@ -28,7 +36,12 @@ export function defaultAdjustParams() {
     chin_width: 0,
     chin_len: 0,
     chin_point: 0,
+    cheek_slim: 0,
+    forehead: 0,
     eye_bags: 0,
+    eye_bright: 0,
+    eye_enlarge: 0,
+    eye_whiten: 0,
     eye_lashes: 0,
     eye_liner: 0,
     eye_brows: 0,
@@ -36,6 +49,11 @@ export function defaultAdjustParams() {
     teeth_white: 0,
     smile: 0,
     lip_plump: 0,
+    lip_tint: 0,
+    lip_width: 0,
+    blush: 0,
+    contour: 0,
+    lip_gloss: 0,
   };
 }
 
@@ -215,10 +233,54 @@ function buildControls(lm, w, h, p, bb) {
     }
   }
 
+  const cs = s(p.cheek_slim);
+  if (cs > 0) {
+    add(234, unit * 1.65 * cs, 0, sigmaW, cs);
+    add(454, -unit * 1.65 * cs, 0, sigmaW, cs);
+    add(205, unit * 0.9 * cs, 0, sigmaW * 0.85, cs * 0.75);
+    add(425, -unit * 0.9 * cs, 0, sigmaW * 0.85, cs * 0.75);
+  }
+
+  const fh = s(p.forehead);
+  if (fh > 0) {
+    add(10, 0, -unit * 1.45 * fh, sigmaW * 0.9, fh);
+    add(338, (midX - lmPx(lm, 338, w, h).x) * 0.08 * fh, -unit * 0.55 * fh, sigmaW * 0.75, fh * 0.7);
+    add(297, (midX - lmPx(lm, 297, w, h).x) * 0.08 * fh, -unit * 0.55 * fh, sigmaW * 0.75, fh * 0.7);
+  }
+
+  const es = s(p.eye_size);
+  if (es > 0) {
+    for (const idx of [33, 133, 263, 362]) {
+      const pt = lmPx(lm, idx, w, h);
+      const vx = pt.x - midX;
+      const vy = pt.y - lmPx(lm, idx === 33 || idx === 133 ? 159 : 386, w, h).y;
+      const len = Math.hypot(vx, vy) || 1;
+      controls.push({
+        x: pt.x,
+        y: pt.y,
+        dx: (vx / len) * unit * 0.75 * es,
+        dy: (vy / len) * unit * 0.45 * es,
+        sigma: sigmaN * 0.55,
+      });
+    }
+  }
+
+  const et = s(p.eye_tilt);
+  if (et > 0) {
+    add(33, unit * 0.35 * et, -unit * 0.55 * et, sigmaN * 0.5, et);
+    add(263, -unit * 0.35 * et, -unit * 0.55 * et, sigmaN * 0.5, et);
+  }
+
+  const lw = s(p.lip_width);
+  if (lw > 0) {
+    add(61, -unit * 0.85 * lw, 0, sigmaN * 0.6, lw);
+    add(291, unit * 0.85 * lw, 0, sigmaN * 0.6, lw);
+  }
+
   return controls;
 }
 
-function dispAt(controls, x, y) {
+function dispAt(controls, x, y, midX, symmetry, maxDisp) {
   let dx = 0;
   let dy = 0;
   let wsum = 0;
@@ -233,7 +295,39 @@ function dispAt(controls, x, y) {
     wsum += w;
   }
   if (wsum < 1e-8) return { dx: 0, dy: 0 };
-  return { dx: dx / wsum, dy: dy / wsum };
+  dx /= wsum;
+  dy /= wsum;
+
+  if (symmetry && midX != null) {
+    let mdx = 0;
+    let mdy = 0;
+    let mw = 0;
+    const mx = 2 * midX - x;
+    for (const c of controls) {
+      const ddx = mx - c.x;
+      const ddy = y - c.y;
+      const d2 = ddx * ddx + ddy * ddy;
+      const s2 = c.sigma * c.sigma * 2;
+      const w = Math.exp(-d2 / Math.max(1e-6, s2));
+      mdx += w * c.dx;
+      mdy += w * c.dy;
+      mw += w;
+    }
+    if (mw > 1e-8) {
+      mdx /= mw;
+      mdy /= mw;
+      dx = (dx - mdx) * 0.5;
+      dy = (dy + mdy) * 0.5;
+    }
+  }
+
+  const mag = Math.hypot(dx, dy);
+  if (mag > maxDisp) {
+    const sc = maxDisp / mag;
+    dx *= sc;
+    dy *= sc;
+  }
+  return { dx, dy };
 }
 
 function sampleBilinear(data, w, h, x, y) {
@@ -263,11 +357,16 @@ function sampleBilinear(data, w, h, x, y) {
  * @param {{ x0: number, y0: number, x1: number, y1: number }} bbox
  * @param {number} gridN
  */
-function warpBackward(src, w, h, bbox, controls, gridN = 20) {
-  const { x0, y0, x1, y1 } = bbox;
+function warpBackward(src, w, h, bbox, controls, gridN = 20, warpOpts = {}) {
+  const { x0, y0, x1, y1, fw } = bbox;
   const bw = x1 - x0 + 1;
   const bh = y1 - y0 + 1;
   if (bw < 4 || bh < 4) return src;
+
+  const midX = (x0 + x1) / 2;
+  const symmetry = !!warpOpts.symmetry;
+  const maxDisp = Math.max(8, (fw || bw) * 0.12);
+  const feather = Math.max(12, (fw || bw) * 0.08);
 
   const gx = gridN;
   const gy = gridN;
@@ -280,7 +379,7 @@ function warpBackward(src, w, h, bbox, controls, gridN = 20) {
     for (let i = 0; i <= gx; i++) {
       const px = x0 + i * cellX;
       const py = y0 + j * cellY;
-      const d = dispAt(controls, px, py);
+      const d = dispAt(controls, px, py, midX, symmetry, maxDisp);
       const idx = j * (gx + 1) + i;
       gridDx[idx] = d.dx;
       gridDy[idx] = d.dy;
@@ -291,6 +390,17 @@ function warpBackward(src, w, h, bbox, controls, gridN = 20) {
   out.data.set(src.data);
   const sd = src.data;
   const od = out.data;
+
+  const edgeFeather = (px, py) => {
+    const dL = px - x0;
+    const dR = x1 - px;
+    const dT = py - y0;
+    const dB = y1 - py;
+    const d = Math.min(dL, dR, dT, dB);
+    if (d >= feather) return 1;
+    const t = d / feather;
+    return t * t * (3 - 2 * t);
+  };
 
   const interpDisp = (px, py) => {
     const lx = (px - x0) / cellX;
@@ -306,7 +416,8 @@ function warpBackward(src, w, h, bbox, controls, gridN = 20) {
     const lerp = (a, b, t) => a + (b - a) * t;
     const dx = lerp(lerp(gridDx[i00], gridDx[i10], fx), lerp(gridDx[i01], gridDx[i11], fx), fy);
     const dy = lerp(lerp(gridDy[i00], gridDy[i10], fx), lerp(gridDy[i01], gridDy[i11], fx), fy);
-    return { dx, dy };
+    const f = edgeFeather(px, py);
+    return { dx: dx * f, dy: dy * f };
   };
 
   for (let y = y0; y <= y1; y++) {
@@ -327,12 +438,14 @@ function warpBackward(src, w, h, bbox, controls, gridN = 20) {
   return out;
 }
 
-function shiftLandmarks(lm, w, h, controls) {
+function shiftLandmarks(lm, w, h, controls, bbox, warpOpts) {
   if (!controls.length) return lm;
+  const midX = bbox ? (bbox.x0 + bbox.x1) / 2 : w / 2;
+  const maxDisp = bbox ? Math.max(8, bbox.fw * 0.12) : w * 0.12;
   return lm.map((p) => {
     const px = p.x * w;
     const py = p.y * h;
-    const d = dispAt(controls, px, py);
+    const d = dispAt(controls, px, py, midX, !!warpOpts?.symmetry, maxDisp);
     return { x: (px + d.dx) / w, y: (py + d.dy) / h, z: p.z };
   });
 }
@@ -396,44 +509,80 @@ function fillPolygon(ctx, lm, w, h, indices) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {Array<{x:number,y:number,z?:number}>} lm
  * @param {AdjustParams} p
+ * @param {{ masks?: import('./engine.js').FaceMaskBundle, lipColor?: string, symmetry?: boolean }} opts
  * @returns {boolean} true если что-то применено
  */
-export function applyFaceAdjust(canvas, ctx, lm, p) {
+export function applyFaceAdjust(canvas, ctx, lm, p, opts = {}) {
   const w = canvas.width;
   const h = canvas.height;
   if (!lm || !w || !h) return false;
 
+  const masks = opts.masks;
   const bbox = faceBBox(lm, w, h);
   const controls = buildControls(lm, w, h, p, bbox);
   const hasWarp = controls.length > 0;
   const hasBags = s(p.eye_bags) > 0;
-  const hasMakeup =
+  const hasEyeFx = s(p.eye_bright) > 0 || s(p.eye_whiten) > 0;
+  const hasLipTint = s(p.lip_tint) > 0;
+  const hasMakeupOverlay =
     s(p.eye_lashes) > 0 ||
     s(p.eye_liner) > 0 ||
     s(p.eye_brows) > 0 ||
     s(p.eye_shadow) > 0;
   const hasTeeth = s(p.teeth_white) > 0;
+  const hasMakeupParams = s(p.blush) > 0 || s(p.contour) > 0 || s(p.lip_gloss) > 0;
 
-  if (!hasWarp && !hasBags && !hasMakeup && !hasTeeth) return false;
+  if (!hasWarp && !hasBags && !hasEyeFx && !hasLipTint && !hasMakeupOverlay && !hasTeeth && !hasMakeupParams) {
+    return false;
+  }
 
+  const warpOpts = { symmetry: !!opts.symmetry };
   let img = ctx.getImageData(0, 0, w, h);
   if (hasWarp) {
-    img = warpBackward(img, w, h, bbox, controls, Math.min(24, Math.max(14, Math.floor(bbox.fw / 45))));
+    img = warpBackward(
+      img,
+      w,
+      h,
+      bbox,
+      controls,
+      Math.min(28, Math.max(16, Math.floor(bbox.fw / 40))),
+      warpOpts
+    );
     ctx.putImageData(img, 0, 0);
   }
 
-  const lm2 = hasWarp ? shiftLandmarks(lm, w, h, controls) : lm;
+  const lm2 = hasWarp ? shiftLandmarks(lm, w, h, controls, bbox, warpOpts) : lm;
 
   if (hasBags) {
     applyAutoEyes(canvas, lm2, s(p.eye_bags) * 0.98);
   }
 
-  if (hasMakeup || hasTeeth) {
+  if (masks && hasEyeFx) {
+    if (s(p.eye_bright) > 0) {
+      applyIrisBright(canvas, masks.leftIrisAlpha, masks.rightIrisAlpha, s(p.eye_bright) * 0.95);
+    }
+    if (s(p.eye_whiten) > 0) {
+      applyScleraWhiten(canvas, masks.leftScleraAlpha, masks.rightScleraAlpha, s(p.eye_whiten) * 0.92);
+    }
+  }
+
+  if (masks && hasLipTint && opts.lipColor) {
+    applyAutoLip(canvas, masks.lip, opts.lipColor, s(p.lip_tint) * 0.88);
+  }
+
+  if (masks && hasTeeth) {
+    applyTeethWhite(canvas, masks.teethAlpha, s(p.teeth_white));
+  }
+
+  if (masks && hasMakeupParams) {
+    applyMakeup(ctx, canvas, masks, p, lm2);
+  }
+
+  if (hasMakeupOverlay) {
     const la = s(p.eye_lashes);
     const li = s(p.eye_liner);
     const br = s(p.eye_brows);
     const sh = s(p.eye_shadow);
-    const tw = s(p.teeth_white);
 
     ctx.save();
 
@@ -497,37 +646,6 @@ export function applyFaceAdjust(canvas, ctx, lm, p) {
       const upperR = [33, 246, 161, 160, 159, 158, 157, 173];
       drawLashesAlongPath(ctx, lm2, w, h, upperL, la);
       drawLashesAlongPath(ctx, lm2, w, h, upperR, la);
-    }
-
-    if (tw > 0) {
-      const inner = INNER_LIP_INDICES;
-      let minY = Infinity;
-      let maxY = -Infinity;
-      let minX = Infinity;
-      let maxX = -Infinity;
-      for (const i of inner) {
-        const pt = lmPx(lm2, i, w, h);
-        minY = Math.min(minY, pt.y);
-        maxY = Math.max(maxY, pt.y);
-        minX = Math.min(minX, pt.x);
-        maxX = Math.max(maxX, pt.x);
-      }
-      const my = (minY + maxY) / 2;
-      const band = (maxY - minY) * 0.35;
-      const img2 = ctx.getImageData(0, 0, w, h);
-      const d = img2.data;
-      const str = tw * 0.55;
-      for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
-        for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
-          if (y < my || y > my + band) continue;
-          const o = (y * w + x) * 4;
-          const lift = str * (1 - Math.abs(y - (my + band * 0.35)) / (band * 0.8));
-          d[o] = Math.min(255, d[o] + 22 * lift);
-          d[o + 1] = Math.min(255, d[o + 1] + 20 * lift);
-          d[o + 2] = Math.min(255, d[o + 2] + 18 * lift);
-        }
-      }
-      ctx.putImageData(img2, 0, 0);
     }
 
     ctx.restore();

@@ -1,15 +1,20 @@
 import {
   ensureFaceLandmarker,
+  ensureImageSegmenter,
   detectLandmarks,
-  buildSkinMaskCanvas,
-  buildLipMaskCanvas,
-  maskAlphaFromCanvas,
+  buildFaceMaskBundle,
   maskValueAt,
   getLandmarker,
+  applyAutoSkin,
+  applySkinTone,
+  applyHairShineLocal,
+  applyLocalSkinSmooth,
+  isMobileUA,
 } from "./engine.js";
 import { applyFaceAdjust } from "./adjustEngine.js";
-import { applyLightPipeline, rotateCanvas90CW, rotateCanvas90CCW } from "./filters.js";
+import { applyLightPipeline, applyBackgroundBlur, rotateCanvas90CW, rotateCanvas90CCW } from "./filters.js";
 import { runCometEdit, getCometPresetPrompt } from "./cometClient.js";
+import { MAKEUP_PRESETS } from "./makeupEngine.js";
 
 const fileInput = document.getElementById("fileInput");
 const canvas = document.getElementById("view");
@@ -41,6 +46,12 @@ const panelEyes = document.getElementById("panelEyes");
 const panelMouth = document.getElementById("panelMouth");
 const panelBrush = document.getElementById("panelBrush");
 const panelLight = document.getElementById("panelLight");
+const symmetryMirror = document.getElementById("symmetryMirror");
+const skinSliders = document.getElementById("skinSliders");
+const resetSkinSliders = document.getElementById("resetSkinSliders");
+const eyesBrushBtn = document.getElementById("eyesBrushBtn");
+const makeupNatural = document.getElementById("makeupNatural");
+const makeupEvening = document.getElementById("makeupEvening");
 
 const DOCK_PANEL = {
   nose: panelNose,
@@ -54,11 +65,12 @@ const DOCK_PANEL = {
 };
 
 const FACE_DOCK_TABS = new Set(["nose", "face", "eyes", "mouth"]);
-const BRUSH_DOCK = { skin: "smooth", heal: "heal", lip: "lip" };
+const BRUSH_DOCK = { skin: "smooth", heal: "heal", lip: "lip", eyes: "eyes" };
 const BRUSH_HINTS = {
-  smooth: "Кисть: сглаживание кожи по лицу",
+  smooth: "Кисть: сглаживание кожи (частотное разделение)",
   heal: "Кисть: точечно убрать прыщи",
   lip: "Кисть: помада по губам",
+  eyes: "Кисть: осветлить область глаз",
 };
 
 /** @type {string | null} */
@@ -88,7 +100,11 @@ let skinMaskAlpha = null;
 let lipMaskCanvas = null;
 /** @type {Uint8ClampedArray | null} */
 let lipMaskAlpha = null;
+/** @type {import('./engine.js').FaceMaskBundle | null} */
+let faceMaskBundle = null;
 
+/** После коррекций лица + кожи — база для света/фона/волос. */
+let skinPipelineBase = null;
 /** База пикселей до текущей сессии «Свет и цвет» (без накопления фильтра). */
 let lightPipelineBase = null;
 /** База для коррекций лица + точки на момент первого ненулевого значения в сессии. */
@@ -100,8 +116,13 @@ let faceApplyTimer = null;
 let rangeGesturePointerId = null;
 let rangeGestureUndoPushed = false;
 
-const LIGHT_DEBOUNCE_MS = 95;
-const FACE_DEBOUNCE_MS = 115;
+const LIGHT_DEBOUNCE_MS = isMobileUA() ? 120 : 95;
+const FACE_DEBOUNCE_MS = isMobileUA() ? 150 : 80;
+const SKIN_DEBOUNCE_MS = isMobileUA() ? 180 : 110;
+
+/** @type {Worker | null} */
+let retouchWorker = null;
+let retouchWorkerJob = 0;
 
 function setAdjustSlidersEnabled(on) {
   document.querySelectorAll('input[type="range"][id^="adj_"]').forEach((inp) => {
@@ -123,8 +144,10 @@ function showDockPanel(dock) {
     tool = BRUSH_DOCK[dock];
     if (brushPanelHint) brushPanelHint.textContent = BRUSH_HINTS[tool] || "";
     if (lipColorWrap) lipColorWrap.classList.toggle("hidden", tool !== "lip");
-  } else if (lipColorWrap) {
-    lipColorWrap.classList.add("hidden");
+    if (skinSliders) skinSliders.classList.toggle("hidden", dock !== "skin");
+  } else {
+    if (lipColorWrap) lipColorWrap.classList.add("hidden");
+    if (skinSliders) skinSliders.classList.add("hidden");
   }
 }
 
@@ -185,7 +208,13 @@ const ADJ_KEYS = [
   "chin_width",
   "chin_len",
   "chin_point",
+  "cheek_slim",
+  "forehead",
   "eye_bags",
+  "eye_bright",
+  "eye_enlarge",
+  "eye_whiten",
+  "eye_tilt",
   "eye_lashes",
   "eye_liner",
   "eye_brows",
@@ -193,7 +222,14 @@ const ADJ_KEYS = [
   "teeth_white",
   "smile",
   "lip_plump",
+  "lip_tint",
+  "lip_width",
+  "blush",
+  "contour",
+  "lip_gloss",
 ];
+
+const SKIN_KEYS = ["skin_smooth", "skin_tone", "skin_texture"];
 
 function readAdjustParams() {
   /** @type {Record<string, number>} */
@@ -209,8 +245,100 @@ function hasAdjustParams(p) {
   return ADJ_KEYS.some((k) => (p[k] || 0) > 0);
 }
 
+function readSkinParams() {
+  return {
+    smooth: Number(document.getElementById("skin_smooth")?.value) || 0,
+    tone: Number(document.getElementById("skin_tone")?.value) || 0,
+    texture: Number(document.getElementById("skin_texture")?.value) || 0,
+  };
+}
+
+function hasSkinEffect(p) {
+  return p.smooth > 0 || p.tone > 0;
+}
+
+function readSceneParams() {
+  return {
+    bgBlur: Number(document.getElementById("local_bg_blur")?.value) || 0,
+    hairShine: Number(document.getElementById("local_hair_shine")?.value) || 0,
+  };
+}
+
+function hasSceneEffect(p) {
+  return p.bgBlur > 0 || p.hairShine > 0;
+}
+
+function faceAdjustOpts() {
+  return {
+    masks: faceMaskBundle,
+    lipColor: lipColor?.value || "#b8324a",
+    symmetry: !!(symmetryMirror && symmetryMirror.checked),
+  };
+}
+
+function textureSigmas(textureVal) {
+  const t = (textureVal || 0) / 100;
+  return {
+    fine: 3 + t * 4,
+    coarse: 10 + (1 - t) * 10,
+  };
+}
+
+function getRetouchWorker() {
+  if (retouchWorker) return retouchWorker;
+  try {
+    retouchWorker = new Worker(new URL("./retouchWorker.js", import.meta.url));
+  } catch {
+    retouchWorker = null;
+  }
+  return retouchWorker;
+}
+
+function applyAutoSkinAsync(workCanvas, skinMask, strength, sigmas) {
+  const worker = getRetouchWorker();
+  if (!worker || strength <= 0) {
+    applyAutoSkin(workCanvas, skinMask, strength, sigmas);
+    return Promise.resolve();
+  }
+  const w = workCanvas.width;
+  const h = workCanvas.height;
+  const ctx = workCanvas.getContext("2d");
+  const img = ctx.getImageData(0, 0, w, h);
+  const id = ++retouchWorkerJob;
+  return new Promise((resolve) => {
+    const onMsg = (e) => {
+      if (e.data.id !== id) return;
+      worker.removeEventListener("message", onMsg);
+      if (e.data.ok && e.data.buffer) {
+        const out = new ImageData(new Uint8ClampedArray(e.data.buffer), w, h);
+        ctx.putImageData(out, 0, 0);
+      } else {
+        applyAutoSkin(workCanvas, skinMask, strength, sigmas);
+      }
+      resolve();
+    };
+    worker.addEventListener("message", onMsg);
+    const maskCopy = new Uint8ClampedArray(skinMask);
+    worker.postMessage(
+      {
+        id,
+        type: "autoSkin",
+        width: w,
+        height: h,
+        imageBuffer: img.data.buffer,
+        maskBuffer: maskCopy.buffer,
+        strength,
+        fine: sigmas.fine,
+        coarse: sigmas.coarse,
+      },
+      [img.data.buffer, maskCopy.buffer]
+    );
+  });
+}
+
 function invalidateAdjustBases() {
   lightPipelineBase = null;
+  skinPipelineBase = null;
   faceAdjustBaseImageData = null;
   faceAdjustBaseLandmarks = null;
   if (lightApplyTimer) {
@@ -220,6 +348,31 @@ function invalidateAdjustBases() {
   if (faceApplyTimer) {
     clearTimeout(faceApplyTimer);
     faceApplyTimer = null;
+  }
+  if (skinApplyTimer) {
+    clearTimeout(skinApplyTimer);
+    skinApplyTimer = null;
+  }
+}
+
+let skinApplyTimer = null;
+
+function rebuildFaceMasks() {
+  if (!faceLandmarks || !canvas.width) {
+    faceMaskBundle = null;
+    return;
+  }
+  faceMaskBundle = buildFaceMaskBundle(faceLandmarks, canvas, { withSegmentation: true });
+  skinMaskAlpha = faceMaskBundle.skin;
+  lipMaskCanvas = faceMaskBundle.lip;
+  lipMaskAlpha = faceMaskBundle.lipAlpha;
+}
+
+function paintFaceAdjustToCanvas() {
+  if (!canvas.width) return;
+  if (faceAdjustBaseImageData && faceAdjustBaseLandmarks) {
+    ctx.putImageData(faceAdjustBaseImageData, 0, 0);
+    applyFaceAdjust(canvas, ctx, faceAdjustBaseLandmarks, readAdjustParams(), faceAdjustOpts());
   }
 }
 
@@ -235,37 +388,76 @@ function ensureSliderGestureUndo() {
   }
 }
 
-function runLightApplyLive() {
+async function runSkinApplyLive() {
+  if (!canvas.width) return;
+  const sp = readSkinParams();
+  try {
+    paintFaceAdjustToCanvas();
+    if (!hasSkinEffect(sp)) {
+      skinPipelineBase = null;
+      await runLightApplyLive();
+      return;
+    }
+    if (faceMaskBundle) {
+      const sig = textureSigmas(sp.texture);
+      if (sp.smooth > 0) {
+        await applyAutoSkinAsync(canvas, faceMaskBundle.skin, sp.smooth / 100, sig);
+      }
+      if (sp.tone > 0) {
+        applySkinTone(canvas, faceMaskBundle.skin, sp.tone / 100);
+      }
+    }
+    skinPipelineBase = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    lightPipelineBase = null;
+    await runLightApplyLive();
+  } catch (e) {
+    console.warn("runSkinApplyLive", e);
+  }
+}
+
+function scheduleSkinApply() {
+  if (!canvas.width) return;
+  if (skinApplyTimer) clearTimeout(skinApplyTimer);
+  skinApplyTimer = setTimeout(() => {
+    skinApplyTimer = null;
+    void runSkinApplyLive();
+  }, SKIN_DEBOUNCE_MS);
+}
+
+async function runLightApplyLive() {
   if (!canvas.width) return;
   const w = canvas.width;
   const h = canvas.height;
   const p = readLightParams();
+  const scene = readSceneParams();
   try {
-    if (!hasLightEffect(p)) {
-      if (lightPipelineBase) {
-        ctx.putImageData(lightPipelineBase, 0, 0);
-        lightPipelineBase = null;
-      }
-      invalidateFaceAdjustOnlyBase();
-      if (getLandmarker()) refreshFaceFromCanvas();
+    if (skinPipelineBase) {
+      ctx.putImageData(skinPipelineBase, 0, 0);
+    } else {
+      paintFaceAdjustToCanvas();
+    }
+
+    if (!hasLightEffect(p) && !hasSceneEffect(scene)) {
+      lightPipelineBase = null;
       return;
     }
+
     if (!lightPipelineBase) {
       lightPipelineBase = ctx.getImageData(0, 0, w, h);
     }
     ctx.putImageData(lightPipelineBase, 0, 0);
-    applyLightPipeline(ctx, canvas, p);
-    invalidateFaceAdjustOnlyBase();
-    if (getLandmarker()) refreshFaceFromCanvas();
+    if (hasLightEffect(p)) {
+      applyLightPipeline(ctx, canvas, p);
+    }
+    if (scene.bgBlur > 0 && faceMaskBundle?.background) {
+      applyBackgroundBlur(ctx, canvas, faceMaskBundle.background, scene.bgBlur);
+    }
+    if (scene.hairShine > 0 && faceMaskBundle?.hair) {
+      applyHairShineLocal(canvas, faceMaskBundle.hair, scene.hairShine / 100);
+    }
   } catch (e) {
     console.warn("runLightApplyLive", e);
   }
-}
-
-/** Сбрасываем только базу коррекций лица (пиксели изменились светом). */
-function invalidateFaceAdjustOnlyBase() {
-  faceAdjustBaseImageData = null;
-  faceAdjustBaseLandmarks = null;
 }
 
 function scheduleLightApply() {
@@ -287,13 +479,12 @@ function runFaceAdjustLive() {
       if (faceAdjustBaseImageData && faceAdjustBaseLandmarks) {
         ctx.putImageData(faceAdjustBaseImageData, 0, 0);
         faceLandmarks = cloneLandmarks(faceAdjustBaseLandmarks);
-        const skinCv = buildSkinMaskCanvas(faceLandmarks, w, h);
-        skinMaskAlpha = maskAlphaFromCanvas(skinCv);
-        lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
-        lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
+        rebuildFaceMasks();
         faceAdjustBaseImageData = null;
         faceAdjustBaseLandmarks = null;
+        skinPipelineBase = null;
         lightPipelineBase = null;
+        void runSkinApplyLive();
         updateDockState();
       }
       return;
@@ -303,10 +494,12 @@ function runFaceAdjustLive() {
       faceAdjustBaseLandmarks = cloneLandmarks(faceLandmarks);
     }
     ctx.putImageData(faceAdjustBaseImageData, 0, 0);
-    const ok = applyFaceAdjust(canvas, ctx, faceAdjustBaseLandmarks, p);
+    const ok = applyFaceAdjust(canvas, ctx, faceAdjustBaseLandmarks, p, faceAdjustOpts());
     if (!ok) return;
+    skinPipelineBase = null;
     lightPipelineBase = null;
     refreshFaceFromCanvas();
+    void runSkinApplyLive();
   } catch (e) {
     console.warn("runFaceAdjustLive", e);
   }
@@ -329,8 +522,17 @@ function resetLightSlidersUI() {
     "light_saturation",
     "light_sharpen",
     "light_vignette",
+    "local_bg_blur",
+    "local_hair_shine",
   ]) {
     const el = document.getElementById(id);
+    if (el) el.value = "0";
+  }
+}
+
+function resetSkinSlidersUI() {
+  for (const k of SKIN_KEYS) {
+    const el = document.getElementById(k);
     if (el) el.value = "0";
   }
 }
@@ -409,9 +611,17 @@ function bindLiveAdjustSliders() {
       el.addEventListener("input", () => scheduleLightApply());
     });
   }
+  if (skinSliders) {
+    skinSliders.querySelectorAll('input[type="range"]').forEach((el) => {
+      el.addEventListener("input", () => scheduleSkinApply());
+    });
+  }
   document.querySelectorAll('input[type="range"][id^="adj_"]').forEach((el) => {
     el.addEventListener("input", () => scheduleFaceAdjustApply());
   });
+  if (symmetryMirror) {
+    symmetryMirror.addEventListener("change", () => scheduleFaceAdjustApply());
+  }
 }
 
 function refreshFaceFromCanvas() {
@@ -419,12 +629,7 @@ function refreshFaceFromCanvas() {
   const det = detectLandmarks(canvas);
   if (!det || !det.landmarks) return;
   faceLandmarks = det.landmarks;
-  const w = canvas.width;
-  const h = canvas.height;
-  const skinCv = buildSkinMaskCanvas(faceLandmarks, w, h);
-  skinMaskAlpha = maskAlphaFromCanvas(skinCv);
-  lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
-  lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
+  rebuildFaceMasks();
   updateDockState();
 }
 
@@ -495,8 +700,11 @@ async function onCometApply() {
     resetViewportPanZoom();
     invalidateAdjustBases();
     resetLightSlidersUI();
-    resetAdjustSlidersUI();
+    resetSkinSlidersUI();
+    faceAdjustBaseImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (faceLandmarks) faceAdjustBaseLandmarks = cloneLandmarks(faceLandmarks);
     await analyzeFace();
+    void runSkinApplyLive();
     setStatus("ИИ готово. ↩ — отмена.");
     setTimeout(() => {
       if (statusEl && statusEl.textContent.includes("ИИ готово")) setStatus("");
@@ -550,12 +758,22 @@ function updateDockState() {
   if (cometModel) cometModel.disabled = !hasImg;
   if (resetLightSliders) resetLightSliders.disabled = !hasImg;
   if (resetAdjustSliders) resetAdjustSliders.disabled = !hasFace;
+  if (resetSkinSliders) resetSkinSliders.disabled = !hasFace;
+  if (symmetryMirror) symmetryMirror.disabled = !hasFace;
+  if (eyesBrushBtn) eyesBrushBtn.disabled = !hasFace;
+  if (makeupNatural) makeupNatural.disabled = !hasFace;
+  if (makeupEvening) makeupEvening.disabled = !hasFace;
   if (rotCwBtn) rotCwBtn.disabled = !hasImg;
   if (rotCcwBtn) rotCcwBtn.disabled = !hasImg;
 
   if (panelLight) {
     panelLight.querySelectorAll('input[type="range"]').forEach((inp) => {
       inp.disabled = !hasImg;
+    });
+  }
+  if (skinSliders) {
+    skinSliders.querySelectorAll('input[type="range"]').forEach((inp) => {
+      inp.disabled = !hasFace;
     });
   }
 
@@ -633,6 +851,7 @@ resetBtn.addEventListener("click", () => {
     ctx.putImageData(originalSnapshot, 0, 0);
     invalidateAdjustBases();
     resetLightSlidersUI();
+    resetSkinSlidersUI();
     resetAdjustSlidersUI();
     void analyzeFace();
   }
@@ -688,6 +907,7 @@ function fitImageToCanvas(src) {
   saveBtn.disabled = false;
   invalidateAdjustBases();
   resetLightSlidersUI();
+  resetSkinSlidersUI();
   resetAdjustSlidersUI();
   setHintVisible(false);
   updateDockState();
@@ -695,6 +915,7 @@ function fitImageToCanvas(src) {
 
 async function analyzeFace() {
   faceLandmarks = null;
+  faceMaskBundle = null;
   skinMaskAlpha = null;
   lipMaskCanvas = null;
   lipMaskAlpha = null;
@@ -705,6 +926,11 @@ async function analyzeFace() {
   setStatus("Ищем лицо и строим маски…");
   try {
     await ensureFaceLandmarker();
+    try {
+      await ensureImageSegmenter();
+    } catch (segErr) {
+      console.warn("segmenter", segErr);
+    }
     await new Promise((r) => setTimeout(r, 80));
     let det = detectLandmarks(canvas);
     if (!det) {
@@ -713,13 +939,8 @@ async function analyzeFace() {
     }
     if (det && det.landmarks) {
       faceLandmarks = det.landmarks;
-      const w = canvas.width;
-      const h = canvas.height;
-      const skinCv = buildSkinMaskCanvas(faceLandmarks, w, h);
-      skinMaskAlpha = maskAlphaFromCanvas(skinCv);
-      lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
-      lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
-      setStatus("Лицо найдено — доступны коррекции носа, лица, глаз и рта.");
+      rebuildFaceMasks();
+      setStatus("Лицо найдено — коррекции, кожа, макияж и фон доступны.");
     } else {
       setStatus(
         "Лицо не найдено. Коррекции лица недоступны; кисть «Кожа» и «Свет» работают. Попробуйте крупнее лицо в кадре."
@@ -865,12 +1086,10 @@ function stampFilteredDisk(cx, cy, r, filterCss, strengthMul = 1) {
 }
 
 function applySmooth(cx, cy, r) {
-  let mul = 1;
-  if (skinMaskAlpha) {
-    mul = 0.2 + 0.8 * maskValueAt(canvas.width, canvas.height, cx, cy, skinMaskAlpha);
-    if (mul < 0.06) return;
-  }
-  stampFilteredDisk(cx, cy, r, "blur(2.5px) contrast(1.03) saturate(1.04)", mul);
+  const tex = Number(document.getElementById("skin_texture")?.value) || 50;
+  const sig = textureSigmas(tex);
+  const strength = getIntensity() * 0.85;
+  applyLocalSkinSmooth(canvas, cx, cy, r, skinMaskAlpha, strength, sig);
 }
 
 function applyEyes(cx, cy, r) {
@@ -1201,6 +1420,40 @@ if (viewport) {
   viewport.addEventListener("touchend", () => {
     pinchDist0 = 0;
   });
+}
+
+if (resetSkinSliders) {
+  resetSkinSliders.addEventListener("click", () => {
+    resetSkinSlidersUI();
+    skinPipelineBase = null;
+    void runSkinApplyLive();
+  });
+}
+
+if (eyesBrushBtn) {
+  eyesBrushBtn.addEventListener("click", () => {
+    tool = "eyes";
+    if (brushPanelHint) brushPanelHint.textContent = BRUSH_HINTS.eyes;
+    setStatus("Режим кисти: глаза. Ведите по области глаз.");
+  });
+}
+
+function applyMakeupPreset(key) {
+  const preset = MAKEUP_PRESETS[key];
+  if (!preset) return;
+  pushUndo();
+  for (const [k, v] of Object.entries(preset)) {
+    const el = document.getElementById(`adj_${k}`);
+    if (el) el.value = String(v);
+  }
+  scheduleFaceAdjustApply();
+}
+
+if (makeupNatural) {
+  makeupNatural.addEventListener("click", () => applyMakeupPreset("natural"));
+}
+if (makeupEvening) {
+  makeupEvening.addEventListener("click", () => applyMakeupPreset("evening"));
 }
 
 hideAllToolPanels();

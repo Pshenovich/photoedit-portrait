@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=15" />
+  <link rel="stylesheet" href="styles.css?v=16" />
 </head>
 <body>
   <div class="app">
@@ -34,7 +34,6 @@
     </main>
 
     <footer class="dock safe-bottom">
-      <!-- Уровень 1: ИИ тюн -->
       <section class="dock-level" aria-label="ИИ тюн">
         <select id="cometPresetSelect" class="dock-select" disabled>
           <option value="">ИИ тюн</option>
@@ -56,7 +55,6 @@
         </select>
       </section>
 
-      <!-- Уровень 2: инструменты -->
       <section class="dock-level" aria-label="Редактирование">
         <div class="dock-tabs" role="tablist">
           <button type="button" class="dock-tab" data-dock="nose" disabled>Нос</button>
@@ -66,11 +64,11 @@
           <button type="button" class="dock-tab" data-dock="skin" disabled>Кожа</button>
           <button type="button" class="dock-tab" data-dock="heal" disabled>Прыщи</button>
           <button type="button" class="dock-tab" data-dock="lip" disabled>Помада</button>
-          <button type="button" class="dock-tab" data-dock="light" disabled>Свет и цвет</button>
+          <button type="button" class="dock-tab" data-dock="light" disabled>Свет</button>
         </div>
 
         <div id="panelNose" class="tool-panel hidden" data-panel="nose">
-          <p class="panel-hint">Коррекции лица — сразу при движении ползунка</p>
+          <p class="panel-hint">Коррекции — сразу при движении ползунка</p>
           <label class="adj-row"><span>Размер</span><input type="range" id="adj_nose_size" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Поднять</span><input type="range" id="adj_nose_lift" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Спинка</span><input type="range" id="adj_nose_bridge" min="0" max="100" value="0" disabled /></label>
@@ -78,34 +76,57 @@
         </div>
 
         <div id="panelFace" class="tool-panel hidden" data-panel="face">
-          <p class="panel-hint">Коррекции лица — сразу при движении ползунка</p>
+          <p class="panel-hint">Коррекции — сразу при движении ползунка</p>
+          <label class="adj-row adj-toggle"><span>Зеркало (симметрия)</span><input type="checkbox" id="symmetryMirror" disabled /></label>
           <label class="adj-row"><span>Размер</span><input type="range" id="adj_face_size" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Голова</span><input type="range" id="adj_head_narrow" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>V-форма</span><input type="range" id="adj_v_shape" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Щёки</span><input type="range" id="adj_cheek_slim" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Лоб</span><input type="range" id="adj_forehead" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Подбородок</span><input type="range" id="adj_chin_width" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Длина</span><input type="range" id="adj_chin_len" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Острый</span><input type="range" id="adj_chin_point" min="0" max="100" value="0" disabled /></label>
         </div>
 
         <div id="panelEyes" class="tool-panel hidden" data-panel="eyes">
-          <p class="panel-hint">Коррекции лица — сразу при движении ползунка</p>
+          <p class="panel-hint">Глаза и макияж века</p>
           <label class="adj-row"><span>Мешки</span><input type="range" id="adj_eye_bags" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Яркость</span><input type="range" id="adj_eye_bright" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Размер</span><input type="range" id="adj_eye_enlarge" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Белки</span><input type="range" id="adj_eye_whiten" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Наклон</span><input type="range" id="adj_eye_tilt" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Ресницы</span><input type="range" id="adj_eye_lashes" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Стрелки</span><input type="range" id="adj_eye_liner" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Брови</span><input type="range" id="adj_eye_brows" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Тени</span><input type="range" id="adj_eye_shadow" min="0" max="100" value="0" disabled /></label>
+          <button type="button" class="btn btn-ghost btn-block" id="eyesBrushBtn" disabled>Кисть: доработка глаз</button>
         </div>
 
         <div id="panelMouth" class="tool-panel hidden" data-panel="mouth">
-          <p class="panel-hint">Коррекции лица — сразу при движении ползунка</p>
+          <p class="panel-hint">Рот и макияж</p>
           <label class="adj-row"><span>Зубы</span><input type="range" id="adj_teeth_white" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Улыбка</span><input type="range" id="adj_smile" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Плампер</span><input type="range" id="adj_lip_plump" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Тинт губ</span><input type="range" id="adj_lip_tint" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Ширина губ</span><input type="range" id="adj_lip_width" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Румяна</span><input type="range" id="adj_blush" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Контур</span><input type="range" id="adj_contour" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Блеск</span><input type="range" id="adj_lip_gloss" min="0" max="100" value="0" disabled /></label>
+          <div class="btn-row makeup-presets">
+            <button type="button" class="btn btn-ghost" id="makeupNatural" disabled>Натуральный</button>
+            <button type="button" class="btn btn-ghost" id="makeupEvening" disabled>Вечерний</button>
+          </div>
           <button type="button" class="btn btn-ghost btn-block" id="resetAdjustSliders" disabled>Сбросить коррекции</button>
         </div>
 
         <div id="panelBrush" class="tool-panel hidden" data-panel="brush">
           <p class="panel-hint" id="brushPanelHint">Ведите пальцем по фото</p>
+          <div id="skinSliders" class="skin-sliders hidden">
+            <label class="adj-row"><span>Сглаживание</span><input type="range" id="skin_smooth" min="0" max="100" value="0" disabled /></label>
+            <label class="adj-row"><span>Тон / краснота</span><input type="range" id="skin_tone" min="0" max="100" value="0" disabled /></label>
+            <label class="adj-row"><span>Текстура</span><input type="range" id="skin_texture" min="0" max="100" value="0" disabled /></label>
+            <button type="button" class="btn btn-ghost btn-block" id="resetSkinSliders" disabled>Сбросить кожу</button>
+          </div>
           <label class="slider-label">
             <span>Сила</span>
             <input type="range" id="intensity" min="8" max="100" value="52" />
@@ -121,17 +142,19 @@
         </div>
 
         <div id="panelLight" class="tool-panel hidden" data-panel="light">
+          <p class="panel-hint">Свет, цвет, фон и волосы</p>
           <label class="adj-row"><span>Экспозиция</span><input type="range" id="light_exposure" min="-100" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Контраст</span><input type="range" id="light_contrast" min="-100" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Теплота</span><input type="range" id="light_warmth" min="-100" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Насыщенность</span><input type="range" id="light_saturation" min="-100" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Резкость</span><input type="range" id="light_sharpen" min="0" max="100" value="0" disabled /></label>
           <label class="adj-row"><span>Виньетка</span><input type="range" id="light_vignette" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Фон: размытие</span><input type="range" id="local_bg_blur" min="0" max="100" value="0" disabled /></label>
+          <label class="adj-row"><span>Волосы: блеск</span><input type="range" id="local_hair_shine" min="0" max="100" value="0" disabled /></label>
           <button type="button" class="btn btn-ghost btn-block" id="resetLightSliders" disabled>Сбросить свет</button>
         </div>
       </section>
 
-      <!-- Уровень 3: поворот -->
       <section class="dock-level dock-level-rotate" aria-label="Поворот">
         <div class="adj-title">Поворот фото</div>
         <div class="btn-row">
@@ -141,6 +164,6 @@
       </section>
     </footer>
   </div>
-  <script type="module" src="app.js?v=15"></script>
+  <script type="module" src="app.js?v=16"></script>
 </body>
 </html>

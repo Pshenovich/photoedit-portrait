@@ -476,6 +476,34 @@ body {
   background: transparent;
 }
 
+.adj-row.adj-toggle {
+  justify-content: space-between;
+}
+
+.adj-row.adj-toggle input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+
+.skin-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2a2a34;
+}
+
+.makeup-presets {
+  margin: 8px 0;
+  gap: 8px;
+}
+
+.makeup-presets .btn {
+  flex: 1;
+}
+
 .hidden {
   display: none !important;
 }
