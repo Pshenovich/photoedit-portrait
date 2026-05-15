@@ -122,7 +122,6 @@ module.exports = async (req, res) => {
   form.append("prompt", prompt.slice(0, 4000));
   form.append("model", model);
   form.append("output_format", output_format);
-  form.append("response_format", "b64_json");
   form.append("n", "1");
 
   try {
