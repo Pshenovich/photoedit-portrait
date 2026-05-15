@@ -31,10 +31,8 @@ const autoSkinBtn = document.getElementById("autoSkinBtn");
 const autoEyesBtn = document.getElementById("autoEyesBtn");
 const autoLipsBtn = document.getElementById("autoLipsBtn");
 const viewport = document.getElementById("viewport");
-const applyAdjustBtn = document.getElementById("applyAdjustBtn");
 const resetAdjustSliders = document.getElementById("resetAdjustSliders");
 const adjustPanel = document.getElementById("adjustPanel");
-const applyLightBtn = document.getElementById("applyLightBtn");
 const resetLightSliders = document.getElementById("resetLightSliders");
 const rotCwBtn = document.getElementById("rotCwBtn");
 const rotCcwBtn = document.getElementById("rotCcwBtn");
@@ -68,12 +66,25 @@ let lipMaskCanvas = null;
 /** @type {Uint8ClampedArray | null} */
 let lipMaskAlpha = null;
 
+/** База пикселей до текущей сессии «Свет и цвет» (без накопления фильтра). */
+let lightPipelineBase = null;
+/** База для коррекций лица + точки на момент первого ненулевого значения в сессии. */
+let faceAdjustBaseImageData = null;
+/** @type {Array<{ x: number; y: number; z?: number }> | null} */
+let faceAdjustBaseLandmarks = null;
+let lightApplyTimer = null;
+let faceApplyTimer = null;
+let rangeGesturePointerId = null;
+let rangeGestureUndoPushed = false;
+
+const LIGHT_DEBOUNCE_MS = 95;
+const FACE_DEBOUNCE_MS = 115;
+
 function setAdjustSlidersEnabled(on) {
   if (!adjustPanel) return;
   adjustPanel.querySelectorAll('input[type="range"]').forEach((inp) => {
     inp.disabled = !on;
   });
-  if (applyAdjustBtn) applyAdjustBtn.disabled = !on;
 }
 
 const ADJ_KEYS = [
@@ -111,6 +122,208 @@ function hasAdjustParams(p) {
   return ADJ_KEYS.some((k) => (p[k] || 0) > 0);
 }
 
+function invalidateAdjustBases() {
+  lightPipelineBase = null;
+  faceAdjustBaseImageData = null;
+  faceAdjustBaseLandmarks = null;
+  if (lightApplyTimer) {
+    clearTimeout(lightApplyTimer);
+    lightApplyTimer = null;
+  }
+  if (faceApplyTimer) {
+    clearTimeout(faceApplyTimer);
+    faceApplyTimer = null;
+  }
+}
+
+/** @param {Array<{ x: number; y: number; z?: number }>} lm */
+function cloneLandmarks(lm) {
+  return lm.map((p) => ({ x: p.x, y: p.y, z: p.z }));
+}
+
+function ensureSliderGestureUndo() {
+  if (!rangeGestureUndoPushed && canvas.width) {
+    pushUndo();
+    rangeGestureUndoPushed = true;
+  }
+}
+
+function runLightApplyLive() {
+  if (!canvas.width) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  const p = readLightParams();
+  try {
+    if (!hasLightEffect(p)) {
+      if (lightPipelineBase) {
+        ctx.putImageData(lightPipelineBase, 0, 0);
+        lightPipelineBase = null;
+      }
+      invalidateFaceAdjustOnlyBase();
+      if (getLandmarker()) refreshFaceFromCanvas();
+      return;
+    }
+    if (!lightPipelineBase) {
+      lightPipelineBase = ctx.getImageData(0, 0, w, h);
+    }
+    ctx.putImageData(lightPipelineBase, 0, 0);
+    applyLightPipeline(ctx, canvas, p);
+    invalidateFaceAdjustOnlyBase();
+    if (getLandmarker()) refreshFaceFromCanvas();
+  } catch (e) {
+    console.warn("runLightApplyLive", e);
+  }
+}
+
+/** Сбрасываем только базу коррекций лица (пиксели изменились светом). */
+function invalidateFaceAdjustOnlyBase() {
+  faceAdjustBaseImageData = null;
+  faceAdjustBaseLandmarks = null;
+}
+
+function scheduleLightApply() {
+  if (!canvas.width) return;
+  if (lightApplyTimer) clearTimeout(lightApplyTimer);
+  lightApplyTimer = setTimeout(() => {
+    lightApplyTimer = null;
+    runLightApplyLive();
+  }, LIGHT_DEBOUNCE_MS);
+}
+
+function runFaceAdjustLive() {
+  if (!canvas.width || !faceLandmarks) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  const p = readAdjustParams();
+  try {
+    if (!hasAdjustParams(p)) {
+      if (faceAdjustBaseImageData && faceAdjustBaseLandmarks) {
+        ctx.putImageData(faceAdjustBaseImageData, 0, 0);
+        faceLandmarks = cloneLandmarks(faceAdjustBaseLandmarks);
+        const skinCv = buildSkinMaskCanvas(faceLandmarks, w, h);
+        skinMaskAlpha = maskAlphaFromCanvas(skinCv);
+        lipMaskCanvas = buildLipMaskCanvas(faceLandmarks, w, h);
+        lipMaskAlpha = maskAlphaFromCanvas(lipMaskCanvas);
+        faceAdjustBaseImageData = null;
+        faceAdjustBaseLandmarks = null;
+        lightPipelineBase = null;
+        updateAutoButtonState();
+      }
+      return;
+    }
+    if (!faceAdjustBaseImageData || !faceAdjustBaseLandmarks) {
+      faceAdjustBaseImageData = ctx.getImageData(0, 0, w, h);
+      faceAdjustBaseLandmarks = cloneLandmarks(faceLandmarks);
+    }
+    ctx.putImageData(faceAdjustBaseImageData, 0, 0);
+    const ok = applyFaceAdjust(canvas, ctx, faceAdjustBaseLandmarks, p);
+    if (!ok) return;
+    lightPipelineBase = null;
+    refreshFaceFromCanvas();
+  } catch (e) {
+    console.warn("runFaceAdjustLive", e);
+  }
+}
+
+function scheduleFaceAdjustApply() {
+  if (!canvas.width || !faceLandmarks) return;
+  if (faceApplyTimer) clearTimeout(faceApplyTimer);
+  faceApplyTimer = setTimeout(() => {
+    faceApplyTimer = null;
+    runFaceAdjustLive();
+  }, FACE_DEBOUNCE_MS);
+}
+
+function resetLightSlidersUI() {
+  for (const id of [
+    "light_exposure",
+    "light_contrast",
+    "light_warmth",
+    "light_saturation",
+    "light_sharpen",
+    "light_vignette",
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.value = "0";
+  }
+}
+
+function resetAdjustSlidersUI() {
+  for (const k of ADJ_KEYS) {
+    const el = document.getElementById(`adj_${k}`);
+    if (el) el.value = "0";
+  }
+}
+
+function bindLiveAdjustSliders() {
+  const lightPanel = document.getElementById("lightPanel");
+  const panels = [lightPanel, adjustPanel].filter(Boolean);
+
+  for (const panel of panels) {
+    panel.addEventListener(
+      "pointerdown",
+      (e) => {
+        const t = e.target;
+        if (t instanceof HTMLInputElement && t.type === "range") {
+          rangeGesturePointerId = e.pointerId;
+          ensureSliderGestureUndo();
+        }
+      },
+      true
+    );
+    panel.addEventListener(
+      "focusout",
+      (e) => {
+        if (e.target instanceof HTMLInputElement && e.target.type === "range") {
+          rangeGestureUndoPushed = false;
+        }
+      },
+      true
+    );
+  }
+
+  document.addEventListener(
+    "pointerup",
+    (e) => {
+      if (e.pointerId === rangeGesturePointerId) {
+        rangeGesturePointerId = null;
+        rangeGestureUndoPushed = false;
+      }
+    },
+    true
+  );
+  document.addEventListener(
+    "pointercancel",
+    (e) => {
+      if (e.pointerId === rangeGesturePointerId) {
+        rangeGesturePointerId = null;
+        rangeGestureUndoPushed = false;
+      }
+    },
+    true
+  );
+
+  const keyNav = (e) => {
+    if (!(e.target instanceof HTMLInputElement) || e.target.type !== "range") return;
+    if (!panels.some((p) => p.contains(e.target))) return;
+    const nav = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"];
+    if (!nav.includes(e.key) || e.repeat) return;
+    if (rangeGesturePointerId == null) ensureSliderGestureUndo();
+  };
+  document.addEventListener("keydown", keyNav, true);
+
+  if (lightPanel) {
+    lightPanel.querySelectorAll('input[type="range"]').forEach((el) => {
+      el.addEventListener("input", () => scheduleLightApply());
+    });
+  }
+  if (adjustPanel) {
+    adjustPanel.querySelectorAll('input[type="range"]').forEach((el) => {
+      el.addEventListener("input", () => scheduleFaceAdjustApply());
+    });
+  }
+}
+
 function refreshFaceFromCanvas() {
   if (!canvas.width || !getLandmarker()) return;
   const det = detectLandmarks(canvas);
@@ -125,45 +338,10 @@ function refreshFaceFromCanvas() {
   updateAutoButtonState();
 }
 
-async function onApplyAdjust() {
-  if (!canvas.width || !faceLandmarks) {
-    setStatus("Нужно фото с распознанным лицом.");
-    return;
-  }
-  const p = readAdjustParams();
-  if (!hasAdjustParams(p)) {
-    setStatus("Сдвиньте хотя бы один слайдер коррекции.");
-    return;
-  }
-  setStatus("Коррекции: обработка…");
-  await new Promise((r) => requestAnimationFrame(r));
-  pushUndo();
-  try {
-    const ok = applyFaceAdjust(canvas, ctx, faceLandmarks, p);
-    if (!ok) {
-      popUndo();
-      setStatus("Нет активных коррекций.");
-    } else {
-      refreshFaceFromCanvas();
-      setStatus("Коррекции применены. ↩ — отмена.");
-      setTimeout(() => {
-        if (statusEl && statusEl.textContent.includes("Коррекции применены")) setStatus("");
-      }, 2800);
-    }
-  } catch (e) {
-    console.warn(e);
-    popUndo();
-    setStatus("Ошибка коррекций (попробуйте меньшее фото).");
-  }
-}
-
-if (applyAdjustBtn) applyAdjustBtn.addEventListener("click", () => void onApplyAdjust());
 if (resetAdjustSliders) {
   resetAdjustSliders.addEventListener("click", () => {
-    for (const k of ADJ_KEYS) {
-      const el = document.getElementById(`adj_${k}`);
-      if (el) el.value = "0";
-    }
+    resetAdjustSlidersUI();
+    runFaceAdjustLive();
   });
 }
 
@@ -189,30 +367,6 @@ function applyDataUrlToCanvasMaxEdge(dataUrl) {
   });
 }
 
-async function onApplyLight() {
-  if (!canvas.width) return;
-  const p = readLightParams();
-  if (!hasLightEffect(p)) {
-    setStatus("Сдвиньте хотя бы один слайдер «Свет и цвет».");
-    return;
-  }
-  setStatus("Свет и цвет…");
-  await new Promise((r) => requestAnimationFrame(r));
-  pushUndo();
-  try {
-    applyLightPipeline(ctx, canvas, p);
-    if (faceLandmarks) refreshFaceFromCanvas();
-    setStatus("Свет применён. ↩ — отмена.");
-    setTimeout(() => {
-      if (statusEl && statusEl.textContent.includes("Свет применён")) setStatus("");
-    }, 2400);
-  } catch (e) {
-    console.warn(e);
-    popUndo();
-    setStatus("Ошибка обработки света.");
-  }
-}
-
 async function onRotate(cw) {
   if (!canvas.width) return;
   setStatus("Поворот…");
@@ -222,6 +376,7 @@ async function onRotate(cw) {
     if (cw) rotateCanvas90CW(canvas, ctx);
     else rotateCanvas90CCW(canvas, ctx);
     resetViewportPanZoom();
+    invalidateAdjustBases();
     await analyzeFace();
     setStatus("Поворот выполнен.");
     setTimeout(() => {
@@ -248,6 +403,9 @@ async function onCometApply() {
     const dataUrl = await runCometEdit(canvas, { prompt, model });
     await applyDataUrlToCanvasMaxEdge(dataUrl);
     resetViewportPanZoom();
+    invalidateAdjustBases();
+    resetLightSlidersUI();
+    resetAdjustSlidersUI();
     await analyzeFace();
     setStatus("ИИ готово. ↩ — отмена.");
     setTimeout(() => {
@@ -260,20 +418,10 @@ async function onCometApply() {
   }
 }
 
-if (applyLightBtn) applyLightBtn.addEventListener("click", () => void onApplyLight());
 if (resetLightSliders) {
   resetLightSliders.addEventListener("click", () => {
-    for (const id of [
-      "light_exposure",
-      "light_contrast",
-      "light_warmth",
-      "light_saturation",
-      "light_sharpen",
-      "light_vignette",
-    ]) {
-      const el = document.getElementById(id);
-      if (el) el.value = "0";
-    }
+    resetLightSlidersUI();
+    runLightApplyLive();
   });
 }
 if (rotCwBtn) rotCwBtn.addEventListener("click", () => void onRotate(true));
@@ -316,7 +464,6 @@ function updateAutoButtonState() {
   if (autoSkinBtn) autoSkinBtn.disabled = !hasImg;
   if (autoEyesBtn) autoEyesBtn.disabled = !hasImg || !faceLandmarks;
   if (autoLipsBtn) autoLipsBtn.disabled = !hasImg || !lipMaskCanvas;
-  if (applyLightBtn) applyLightBtn.disabled = !hasImg;
   if (resetLightSliders) resetLightSliders.disabled = !hasImg;
   if (rotCwBtn) rotCwBtn.disabled = !hasImg;
   if (rotCcwBtn) rotCcwBtn.disabled = !hasImg;
@@ -362,6 +509,9 @@ function popUndo() {
   }
   ctx.putImageData(prev, 0, 0);
   undoBtn.disabled = undoStack.length === 0;
+  invalidateAdjustBases();
+  if (getLandmarker()) void refreshFaceFromCanvas();
+  updateAutoButtonState();
 }
 
 function setHintVisible(v) {
@@ -391,6 +541,10 @@ resetBtn.addEventListener("click", () => {
   if (originalSnapshot) {
     pushUndo();
     ctx.putImageData(originalSnapshot, 0, 0);
+    invalidateAdjustBases();
+    resetLightSlidersUI();
+    resetAdjustSlidersUI();
+    void analyzeFace();
   }
 });
 
@@ -442,6 +596,9 @@ function fitImageToCanvas(src) {
   undoBtn.disabled = true;
   resetBtn.disabled = false;
   saveBtn.disabled = false;
+  invalidateAdjustBases();
+  resetLightSlidersUI();
+  resetAdjustSlidersUI();
   setHintVisible(false);
   updateAutoButtonState();
 }
@@ -571,6 +728,7 @@ async function autoSkin() {
       fine: 4 + getIntensity() * 2,
       coarse: 11 + getIntensity() * 10,
     });
+    invalidateAdjustBases();
     setStatus("Кожа обновлена. ↩ — отмена.");
     setTimeout(() => {
       if (statusEl && statusEl.textContent.includes("Кожа обновлена")) setStatus("");
@@ -585,12 +743,14 @@ function autoEyes() {
   if (!canvas.width || !faceLandmarks) return;
   pushUndo();
   applyAutoEyes(canvas, faceLandmarks, getIntensity() * 0.95);
+  invalidateAdjustBases();
 }
 
 function autoLips() {
   if (!canvas.width || !lipMaskCanvas) return;
   pushUndo();
   applyAutoLip(canvas, lipMaskCanvas, lipColor.value, getIntensity() * 0.88);
+  invalidateAdjustBases();
 }
 
 if (autoSkinBtn) autoSkinBtn.addEventListener("click", () => void autoSkin());
@@ -826,6 +986,7 @@ function strokeBegin(clientX, clientY) {
   lastY = y;
   const r = Number(brushSize.value);
   try {
+    invalidateAdjustBases();
     pushUndo();
     if (tool === "smooth") applySmooth(x, y, r);
     else if (tool === "eyes") applyEyes(x, y, r);
@@ -1015,6 +1176,7 @@ if (viewport) {
 }
 
 syncToolsUI();
+bindLiveAdjustSliders();
 updateAutoButtonState();
 setAdjustSlidersEnabled(!!faceLandmarks);
 setStatus("");

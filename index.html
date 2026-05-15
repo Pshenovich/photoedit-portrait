@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=14" />
 </head>
 <body>
   <div class="app">
@@ -24,7 +24,7 @@
     </header>
 
     <main class="stage">
-      <p class="hint" id="hint">Выберите фото. Четыре инструмента в один ряд — смахните вправо, чтобы открыть «Прыщи» и «Помада». «Авто кожа» может занять несколько секунд.</p>
+      <p class="hint" id="hint">Выберите фото. «Свет и цвет» и «Коррекции» применяются сразу при движении ползунков (↩ отмена шага). Кисти — смахните ряд инструментов вправо до «Прыщи» и «Помада».</p>
       <p class="status" id="status" role="status" aria-live="polite"></p>
       <div class="canvas-box" id="canvasBox">
         <div class="viewport" id="viewport">
@@ -68,7 +68,6 @@
         <label class="adj-row"><span>Насыщенность</span><input type="range" id="light_saturation" min="-100" max="100" value="0" /></label>
         <label class="adj-row"><span>Резкость</span><input type="range" id="light_sharpen" min="0" max="100" value="0" /></label>
         <label class="adj-row"><span>Виньетка</span><input type="range" id="light_vignette" min="0" max="100" value="0" /></label>
-        <button type="button" class="btn btn-block" id="applyLightBtn" disabled>Применить свет</button>
         <button type="button" class="btn btn-ghost btn-block" id="resetLightSliders" disabled>Сбросить свет</button>
       </div>
 
@@ -111,9 +110,8 @@
       </div>
 
       <div class="adj-panel" id="adjustPanel">
-        <div class="adj-title">Коррекции (нужно лицо)</div>
-        <button type="button" class="btn btn-block" id="applyAdjustBtn" disabled>Применить коррекции</button>
-        <button type="button" class="btn btn-ghost btn-block" id="resetAdjustSliders">Сбросить слайдеры</button>
+        <div class="adj-title">Коррекции лица (нужно распознанное лицо)</div>
+        <button type="button" class="btn btn-ghost btn-block" id="resetAdjustSliders">Сбросить коррекции</button>
 
         <details class="adj-details" open>
           <summary>Нос</summary>
@@ -148,6 +146,6 @@
       </div>
     </footer>
   </div>
-  <script type="module" src="app.js?v=13"></script>
+  <script type="module" src="app.js?v=14"></script>
 </body>
 </html>
