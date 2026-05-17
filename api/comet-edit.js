@@ -89,6 +89,7 @@ module.exports = async (req, res) => {
 
   const prompt = typeof body.prompt === "string" ? body.prompt : "";
   const imageBase64 = typeof body.imageBase64 === "string" ? body.imageBase64 : "";
+  const maskBase64 = typeof body.maskBase64 === "string" ? body.maskBase64 : "";
   const model = typeof body.model === "string" ? body.model : "gpt-image-2";
   const output_format = body.output_format || "jpeg";
 
@@ -123,6 +124,29 @@ module.exports = async (req, res) => {
   form.append("model", model);
   form.append("output_format", output_format);
   form.append("n", "1");
+
+  if (maskBase64) {
+    let maskBuf;
+    try {
+      maskBuf = Buffer.from(maskBase64, "base64");
+    } catch {
+      sendJson(res, 400, { error: "Некорректный base64 маски" });
+      return;
+    }
+    if (maskBuf.length < 50 || maskBuf.length > 4 * 1024 * 1024) {
+      sendJson(res, 400, { error: "Размер маски вне допустимого диапазона" });
+      return;
+    }
+    const maskPart =
+      typeof File !== "undefined"
+        ? new File([maskBuf], "mask.png", { type: "image/png" })
+        : new Blob([maskBuf], { type: "image/png" });
+    if (typeof File !== "undefined" && maskPart instanceof File) {
+      form.append("mask", maskPart);
+    } else {
+      form.append("mask", maskPart, "mask.png");
+    }
+  }
 
   try {
     const upstream = await fetch("https://api.cometapi.com/v1/images/edits", {

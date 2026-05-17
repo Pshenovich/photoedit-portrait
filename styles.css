@@ -119,6 +119,7 @@ body {
 }
 
 .canvas-box {
+  position: relative;
   flex: 1;
   width: 100%;
   max-width: min(100%, 900px);
@@ -133,10 +134,92 @@ body {
 }
 
 .viewport {
+  position: relative;
   display: inline-block;
   max-width: 100%;
   transform-origin: center center;
   will-change: transform;
+}
+
+.face-pick-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.face-pick-layer.hidden {
+  display: none;
+}
+
+.face-pick-marker {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: rgba(90, 110, 255, 0.88);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  padding: 0;
+}
+
+.face-pick-marker.active {
+  background: #e85d4a;
+  border-color: #ffe0db;
+  transform: scale(1.08);
+}
+
+.remove-person-pick {
+  margin-top: 10px;
+}
+
+.remove-person-pick.hidden {
+  display: none;
+}
+
+.remove-person-hint {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.remove-person-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.remove-person-chip {
+  appearance: none;
+  border: 1px solid #3a3a48;
+  background: #25252f;
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.remove-person-chip.active {
+  border-color: #e85d4a;
+  background: #3a2528;
+  color: #ffd4cc;
+}
+
+.canvas-box.pick-person-mode #view {
+  cursor: crosshair;
 }
 
 #view {

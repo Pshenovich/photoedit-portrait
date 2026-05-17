@@ -2,6 +2,8 @@ import {
   ensureFaceLandmarker,
   ensureImageSegmenter,
   detectLandmarks,
+  detectAllLandmarks,
+  pickLargestFaceIndex,
   buildFaceMaskBundle,
   maskValueAt,
   getLandmarker,
@@ -13,7 +15,7 @@ import {
 } from "./engine.js";
 import { applyFaceAdjust } from "./adjustEngine.js";
 import { applyLightPipeline, applyBackgroundBlur, rotateCanvas90CW, rotateCanvas90CCW } from "./filters.js";
-import { runCometEdit, getCometPresetPrompt } from "./cometClient.js";
+import { runCometEdit, getCometPresetPrompt, COMET_PRESET_REMOVE_PERSON } from "./cometClient.js";
 import { MAKEUP_PRESETS } from "./makeupEngine.js";
 
 const fileInput = document.getElementById("fileInput");
@@ -39,6 +41,11 @@ const cometPrompt = document.getElementById("cometPrompt");
 const cometModel = document.getElementById("cometModel");
 const cometPresetSelect = document.getElementById("cometPresetSelect");
 const cometPromptRow = document.getElementById("cometPromptRow");
+const removePersonPickRow = document.getElementById("removePersonPickRow");
+const removePersonHint = document.getElementById("removePersonHint");
+const removePersonChips = document.getElementById("removePersonChips");
+const canvasBox = document.getElementById("canvasBox");
+const facePickLayer = document.getElementById("facePickLayer");
 const dockTabs = document.querySelectorAll(".dock-tab");
 const panelNose = document.getElementById("panelNose");
 const panelFace = document.getElementById("panelFace");
@@ -75,6 +82,12 @@ const BRUSH_HINTS = {
 
 /** @type {string | null} */
 let activeDock = null;
+
+/** @type {Array<{ landmarks: Array<{x:number,y:number,z?:number}>, cx: number, cy: number }>} */
+let removePersonFaces = [];
+let removePersonSelected = 0;
+/** @type {{ x: number, y: number, pointerId?: number } | null} */
+let removePersonTap = null;
 
 canvas.style.touchAction = "none";
 if (viewport) viewport.style.touchAction = "none";
@@ -181,18 +194,148 @@ function bindDockTabs() {
   });
 }
 
+function isRemovePersonMode() {
+  return cometPresetSelect?.value === COMET_PRESET_REMOVE_PERSON;
+}
+
+function isRemovePersonPickMode() {
+  return isRemovePersonMode() && removePersonFaces.length > 1;
+}
+
+function setRemovePersonSelected(index) {
+  if (!removePersonFaces.length) return;
+  removePersonSelected = Math.max(0, Math.min(index, removePersonFaces.length - 1));
+  renderRemovePersonPickUI();
+}
+
+function renderRemovePersonPickUI() {
+  if (removePersonChips) {
+    removePersonChips.innerHTML = "";
+    removePersonFaces.forEach((_, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "remove-person-chip" + (i === removePersonSelected ? " active" : "");
+      btn.textContent = `Человек ${i + 1}`;
+      btn.addEventListener("click", () => setRemovePersonSelected(i));
+      removePersonChips.appendChild(btn);
+    });
+  }
+  if (removePersonHint) {
+    if (removePersonFaces.length > 1) {
+      removePersonHint.textContent =
+        "Кого убрать? Нажмите на лицо на фото или выберите кнопку ниже.";
+    } else if (removePersonFaces.length === 1) {
+      removePersonHint.textContent = "Найден один человек — будет удалён он.";
+    } else {
+      removePersonHint.textContent =
+        "Лица не найдены — удалится вся фигура на фото. Для точности выберите кадр с видимыми лицами.";
+    }
+  }
+  updateFacePickMarkers();
+}
+
+function updateFacePickMarkers() {
+  if (!facePickLayer || !canvas.width) return;
+  if (!isRemovePersonMode() || removePersonFaces.length < 2) {
+    facePickLayer.classList.add("hidden");
+    facePickLayer.setAttribute("aria-hidden", "true");
+    facePickLayer.innerHTML = "";
+    if (canvasBox) canvasBox.classList.remove("pick-person-mode");
+    return;
+  }
+  facePickLayer.classList.remove("hidden");
+  facePickLayer.setAttribute("aria-hidden", "false");
+  if (canvasBox) canvasBox.classList.add("pick-person-mode");
+  facePickLayer.innerHTML = "";
+  const rect = canvas.getBoundingClientRect();
+  const layerRect = facePickLayer.getBoundingClientRect();
+  const sx = rect.width / canvas.width;
+  const sy = rect.height / canvas.height;
+  const offX = rect.left - layerRect.left;
+  const offY = rect.top - layerRect.top;
+  removePersonFaces.forEach((f, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "face-pick-marker" + (i === removePersonSelected ? " active" : "");
+    btn.textContent = String(i + 1);
+    btn.style.left = `${offX + f.cx * sx}px`;
+    btn.style.top = `${offY + f.cy * sy}px`;
+    btn.title = `Убрать человека ${i + 1}`;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setRemovePersonSelected(i);
+    });
+    facePickLayer.appendChild(btn);
+  });
+}
+
+async function refreshRemovePersonFaces() {
+  removePersonFaces = [];
+  removePersonSelected = 0;
+  if (!canvas.width || !isRemovePersonMode()) {
+    if (removePersonPickRow) removePersonPickRow.classList.add("hidden");
+    updateFacePickMarkers();
+    return;
+  }
+  if (removePersonPickRow) removePersonPickRow.classList.remove("hidden");
+  try {
+    await ensureFaceLandmarker();
+    removePersonFaces = detectAllLandmarks(canvas);
+    if (removePersonFaces.length) {
+      const idx = pickLargestFaceIndex(
+        removePersonFaces.map((f) => f.landmarks),
+        canvas.width,
+        canvas.height
+      );
+      removePersonSelected = idx;
+    }
+  } catch (e) {
+    console.warn("refreshRemovePersonFaces", e);
+  }
+  renderRemovePersonPickUI();
+}
+
+function hideRemovePersonPick() {
+  removePersonFaces = [];
+  removePersonSelected = 0;
+  if (removePersonPickRow) removePersonPickRow.classList.add("hidden");
+  updateFacePickMarkers();
+}
+
+function selectRemovePersonAtClient(clientX, clientY) {
+  if (!removePersonFaces.length) return;
+  const { x, y } = canvasCoords(clientX, clientY);
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < removePersonFaces.length; i++) {
+    const f = removePersonFaces[i];
+    const d = (f.cx - x) ** 2 + (f.cy - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  setRemovePersonSelected(best);
+}
+
 function bindCometSelect() {
   if (!cometPresetSelect) return;
   cometPresetSelect.addEventListener("change", () => {
     const key = cometPresetSelect.value;
     if (!key) {
       if (cometPromptRow) cometPromptRow.classList.add("hidden");
+      hideRemovePersonPick();
       return;
     }
     if (cometPromptRow) cometPromptRow.classList.remove("hidden");
     if (cometPrompt) {
       const text = getCometPresetPrompt(key);
       if (text) cometPrompt.value = text;
+    }
+    if (key === COMET_PRESET_REMOVE_PERSON) {
+      void refreshRemovePersonFaces();
+    } else {
+      hideRemovePersonPick();
     }
   });
 }
@@ -691,11 +834,31 @@ async function onCometApply() {
     setStatus("Введите промпт или нажмите пресет.");
     return;
   }
+  const presetKey = cometPresetSelect ? cometPresetSelect.value : "";
+  const withPersonMask = presetKey === COMET_PRESET_REMOVE_PERSON;
   const model = cometModel ? cometModel.value : "gpt-image-2";
-  setStatus("ИИ ретушь (до ~1 мин, зависит от API)…");
+  setStatus(
+    withPersonMask
+      ? "Удаляем человека (маска + ИИ, до ~1 мин)…"
+      : "ИИ ретушь (до ~1 мин, зависит от API)…"
+  );
   pushUndo();
   try {
-    const dataUrl = await runCometEdit(canvas, { prompt, model });
+    if (withPersonMask) {
+      try {
+        await ensureImageSegmenter();
+      } catch (segErr) {
+        console.warn("segmenter", segErr);
+      }
+    }
+    const personFaces = removePersonFaces.map((f) => f.landmarks);
+    const dataUrl = await runCometEdit(canvas, {
+      prompt,
+      model,
+      withPersonMask,
+      personFaceIndex: removePersonSelected,
+      personFaces: personFaces.length ? personFaces : undefined,
+    });
     await applyDataUrlToCanvasMaxEdge(dataUrl);
     resetViewportPanZoom();
     invalidateAdjustBases();
@@ -704,6 +867,9 @@ async function onCometApply() {
     faceAdjustBaseImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     if (faceLandmarks) faceAdjustBaseLandmarks = cloneLandmarks(faceLandmarks);
     await analyzeFace();
+    hideRemovePersonPick();
+    if (cometPresetSelect) cometPresetSelect.value = "";
+    if (cometPromptRow) cometPromptRow.classList.add("hidden");
     void runSkinApplyLive();
     setStatus("ИИ готово. ↩ — отмена.");
     setTimeout(() => {
@@ -911,6 +1077,7 @@ function fitImageToCanvas(src) {
   resetAdjustSlidersUI();
   setHintVisible(false);
   updateDockState();
+  if (isRemovePersonMode()) void refreshRemovePersonFaces();
 }
 
 async function analyzeFace() {
@@ -954,6 +1121,7 @@ async function analyzeFace() {
   } finally {
     updateDockState();
     setAdjustSlidersEnabled(!!faceLandmarks);
+    if (isRemovePersonMode()) void refreshRemovePersonFaces();
   }
 }
 
@@ -1258,7 +1426,7 @@ function distance(ax, ay, bx, by) {
 }
 
 function strokeBegin(clientX, clientY) {
-  if (!canvas.width) return;
+  if (!canvas.width || isRemovePersonPickMode()) return;
   const { x, y } = canvasCoords(clientX, clientY);
   drawing = true;
   lastX = x;
@@ -1326,6 +1494,11 @@ function strokeFinish(ev) {
 function onPointerDown(ev) {
   if (!canvas.width) return;
   if (ev.pointerType === "touch") return;
+  if (isRemovePersonPickMode()) {
+    ev.preventDefault();
+    removePersonTap = { x: ev.clientX, y: ev.clientY, pointerId: ev.pointerId };
+    return;
+  }
   ev.preventDefault();
   if (typeof ev.pointerId === "number" && canvas.setPointerCapture) {
     try {
@@ -1346,6 +1519,19 @@ function onPointerMove(ev) {
 
 function onPointerUp(ev) {
   if (ev.pointerType === "touch") return;
+  if (
+    removePersonTap &&
+    (removePersonTap.pointerId === undefined || removePersonTap.pointerId === ev.pointerId)
+  ) {
+    const d = Math.hypot(ev.clientX - removePersonTap.x, ev.clientY - removePersonTap.y);
+    const tap = removePersonTap;
+    removePersonTap = null;
+    if (d < 14 && isRemovePersonPickMode()) {
+      ev.preventDefault();
+      selectRemovePersonAtClient(tap.x, tap.y);
+      return;
+    }
+  }
   strokeFinish(ev);
 }
 
@@ -1364,9 +1550,16 @@ canvas.addEventListener(
   (e) => {
     if (e.touches.length === 2) {
       if (drawing) strokeFinish(null);
+      removePersonTap = null;
       return;
     }
     if (e.touches.length !== 1) return;
+    if (isRemovePersonPickMode()) {
+      e.preventDefault();
+      const t = e.touches[0];
+      removePersonTap = { x: t.clientX, y: t.clientY };
+      return;
+    }
     e.preventDefault();
     const t = e.touches[0];
     strokeBegin(t.clientX, t.clientY);
@@ -1391,6 +1584,16 @@ canvas.addEventListener(
 canvas.addEventListener(
   "touchend",
   (e) => {
+    if (removePersonTap && isRemovePersonPickMode()) {
+      const t = e.changedTouches[0];
+      if (t) {
+        const d = Math.hypot(t.clientX - removePersonTap.x, t.clientY - removePersonTap.y);
+        if (d < 18) selectRemovePersonAtClient(t.clientX, t.clientY);
+      }
+      removePersonTap = null;
+      e.preventDefault();
+      return;
+    }
     if (!drawing) return;
     if (e.touches.length > 0) return;
     e.preventDefault();
@@ -1413,6 +1616,7 @@ let panY = 0;
 function applyViewportTransform() {
   if (!viewport) return;
   viewport.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  updateFacePickMarkers();
 }
 
 function resetViewportPanZoom() {
@@ -1491,6 +1695,7 @@ if (makeupEvening) {
 hideAllToolPanels();
 bindDockTabs();
 bindCometSelect();
+window.addEventListener("resize", () => updateFacePickMarkers());
 bindLiveAdjustSliders();
 updateDockState();
 setAdjustSlidersEnabled(!!faceLandmarks);

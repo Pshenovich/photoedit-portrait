@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=17" />
+  <link rel="stylesheet" href="styles.css?v=18" />
 </head>
 <body>
   <div class="app">
@@ -34,6 +34,7 @@
       <div class="canvas-box" id="canvasBox">
         <div class="viewport" id="viewport">
           <canvas id="view"></canvas>
+          <div id="facePickLayer" class="face-pick-layer hidden" aria-hidden="true"></div>
         </div>
       </div>
     </main>
@@ -49,7 +50,12 @@
           <option value="teeth_smile">Зубы</option>
           <option value="hair_shine">Волосы</option>
           <option value="bg_soft">Фон</option>
+          <option value="remove_person">Убрать человека</option>
         </select>
+        <div id="removePersonPickRow" class="remove-person-pick hidden">
+          <p class="remove-person-hint" id="removePersonHint">Кого убрать? Нажмите на лицо на фото или выберите ниже.</p>
+          <div class="remove-person-chips" id="removePersonChips" role="group" aria-label="Выбор человека"></div>
+        </div>
         <div id="cometPromptRow" class="comet-prompt-row hidden">
           <textarea id="cometPrompt" rows="2" placeholder="Промпт (можно изменить)…"></textarea>
           <button type="button" class="btn btn-apply" id="cometApplyBtn" disabled>Применить</button>

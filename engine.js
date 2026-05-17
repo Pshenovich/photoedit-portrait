@@ -65,7 +65,7 @@ export async function ensureFaceLandmarker() {
 
       const base = {
         runningMode: "IMAGE",
-        numFaces: 2,
+        numFaces: 6,
         minFaceDetectionConfidence: 0.15,
         minFacePresenceConfidence: 0.15,
         outputFaceBlendshapes: false,
@@ -186,6 +186,330 @@ export function buildSegmentationMasks(canvas) {
 }
 
 /**
+ * Raw category mask from selfie segmenter (0=background, 1=hair, 2–5=person).
+ * @param {HTMLCanvasElement} canvas
+ * @returns {Uint8Array | Uint8ClampedArray | null}
+ */
+function getSegmentationCategoryMask(canvas) {
+  if (!imageSegmenter) return null;
+  const w = canvas.width;
+  const h = canvas.height;
+  let result;
+  try {
+    result = imageSegmenter.segment(canvas);
+  } catch {
+    return null;
+  }
+  const cat = result.categoryMask;
+  if (!cat) return null;
+  try {
+    if (typeof cat.getAsUint8Array === "function") return cat.getAsUint8Array();
+    if (cat instanceof Uint8ClampedArray || cat instanceof Uint8Array) return cat;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * @param {Uint8ClampedArray} alpha length w*h, 0..255
+ * @param {number} w
+ * @param {number} h
+ * @param {number} radius px
+ */
+function dilateMaskAlpha(alpha, w, h, radius) {
+  if (radius <= 0) return;
+  const src = new Uint8ClampedArray(alpha);
+  const r = Math.min(8, Math.max(1, radius | 0));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (src[i] > 127) {
+        alpha[i] = 255;
+        continue;
+      }
+      let max = 0;
+      for (let dy = -r; dy <= r && !max; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -r; dx <= r; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          if (src[yy * w + xx] > 127) {
+            max = 255;
+            break;
+          }
+        }
+      }
+      alpha[i] = max;
+    }
+  }
+}
+
+/**
+ * @param {Uint8ClampedArray} alpha
+ * @param {number} w
+ * @param {number} h
+ * @param {number} passes
+ */
+function boxBlurMaskAlpha(alpha, w, h, passes) {
+  for (let p = 0; p < passes; p++) {
+    const tmp = new Uint8ClampedArray(alpha);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        let sum = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            sum += tmp[(y + dy) * w + (x + dx)];
+          }
+        }
+        alpha[y * w + x] = Math.round(sum / 9);
+      }
+    }
+  }
+}
+
+/**
+ * @param {Array<{x:number,y:number,z?:number}>} lm
+ * @param {number} w
+ * @param {number} h
+ */
+export function faceCentroidPx(lm, w, h) {
+  const idx = [1, 4, 33, 133, 263, 362, 10, 152];
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (const i of idx) {
+    if (!lm[i]) continue;
+    sx += lm[i].x * w;
+    sy += lm[i].y * h;
+    n++;
+  }
+  if (!n) return { x: w * 0.5, y: h * 0.5 };
+  return { x: sx / n, y: sy / n };
+}
+
+/**
+ * @param {Uint8ClampedArray} cat
+ * @param {number} w
+ * @param {number} h
+ * @returns {Uint8ClampedArray}
+ */
+function buildFullPersonMaskFromCategories(cat, w, h) {
+  const len = w * h;
+  const person = new Uint8ClampedArray(len);
+  for (let i = 0; i < len; i++) {
+    person[i] = cat[i] === 0 ? 0 : 255;
+  }
+  dilateMaskAlpha(person, w, h, 5);
+  boxBlurMaskAlpha(person, w, h, 2);
+  return person;
+}
+
+/**
+ * @param {Uint8ClampedArray} person 255 on person pixels
+ * @param {number} w
+ * @param {number} h
+ * @param {number} sx
+ * @param {number} sy
+ * @param {number} maxR
+ */
+function nearestPersonPixel(sx, sy, person, w, h, maxR) {
+  const ix = Math.round(sx);
+  const iy = Math.round(sy);
+  if (ix >= 0 && ix < w && iy >= 0 && iy < h && person[iy * w + ix] > 127) {
+    return { x: ix, y: iy };
+  }
+  const rMax = Math.min(maxR, Math.max(w, h));
+  for (let r = 1; r <= rMax; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const x = ix + dx;
+        const y = iy + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        if (person[y * w + x] > 127) return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {Uint8ClampedArray} cat
+ * @param {number} w
+ * @param {number} h
+ * @param {Array<{ faceIndex: number, px: number, py: number }>} seeds
+ */
+function labelPersonByFaces(cat, w, h, seeds) {
+  const len = w * h;
+  const labels = new Int16Array(len);
+  const person = new Uint8ClampedArray(len);
+  for (let i = 0; i < len; i++) {
+    if (cat[i] === 0) {
+      labels[i] = -2;
+      continue;
+    }
+    person[i] = 255;
+    labels[i] = -1;
+  }
+  const queue = [];
+  for (const s of seeds) {
+    const hit = nearestPersonPixel(s.px, s.py, person, w, h, 140);
+    if (!hit) continue;
+    const i = hit.y * w + hit.x;
+    if (labels[i] !== -1) continue;
+    labels[i] = s.faceIndex;
+    queue.push(hit.x, hit.y, s.faceIndex);
+  }
+  for (let qi = 0; qi < queue.length; ) {
+    const x = queue[qi++];
+    const y = queue[qi++];
+    const fid = queue[qi++];
+    for (const [dx, dy] of [
+      [0, 1],
+      [0, -1],
+      [1, 0],
+      [-1, 0],
+    ]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const ni = ny * w + nx;
+      if (labels[ni] !== -1) continue;
+      labels[ni] = fid;
+      queue.push(nx, ny, fid);
+    }
+  }
+  return { labels, person };
+}
+
+/**
+ * @param {Array<{x:number,y:number,z?:number}>} lm
+ * @param {number} w
+ * @param {number} h
+ * @returns {Uint8ClampedArray}
+ */
+function buildFaceFallbackPersonMask(lm, w, h) {
+  const c = faceCentroidPx(lm, w, h);
+  let rx = w * 0.22;
+  let ry = h * 0.32;
+  for (const i of [10, 152, 234, 454, 33, 263]) {
+    if (!lm[i]) continue;
+    rx = Math.max(rx, Math.abs(lm[i].x * w - c.x) * 1.85);
+    ry = Math.max(ry, Math.abs(lm[i].y * h - c.y) * 2.35);
+  }
+  const out = new Uint8ClampedArray(w * h);
+  const rx2 = rx * rx;
+  const ry2 = ry * ry;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = (x - c.x) / rx;
+      const dy = (y - c.y) / ry;
+      if (dx * dx + dy * dy <= 1) out[y * w + x] = 255;
+    }
+  }
+  dilateMaskAlpha(out, w, h, 8);
+  boxBlurMaskAlpha(out, w, h, 2);
+  return out;
+}
+
+/**
+ * Person silhouette (255 = person) from selfie segmentation.
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ faceIndex?: number, faces?: Array<Array<{x:number,y:number,z?:number}>> }} [opts]
+ * @returns {Uint8ClampedArray | null}
+ */
+export function buildPersonMaskAlpha(canvas, opts = {}) {
+  const cat = getSegmentationCategoryMask(canvas);
+  if (!cat) return null;
+  const w = canvas.width;
+  const h = canvas.height;
+  const len = w * h;
+  if (cat.length < len) return null;
+
+  const faces = opts.faces && opts.faces.length ? opts.faces : null;
+  const faceIndex = opts.faceIndex ?? 0;
+
+  if (!faces || faces.length <= 1) {
+    if (faces && faces.length === 1 && faces[0]) {
+      const c0 = faceCentroidPx(faces[0], w, h);
+      const seeds = [{ faceIndex: 0, px: c0.x, py: c0.y }];
+      const { labels } = labelPersonByFaces(cat, w, h, seeds);
+      const out = new Uint8ClampedArray(len);
+      let any = false;
+      for (let i = 0; i < len; i++) {
+        if (labels[i] === 0) {
+          out[i] = 255;
+          any = true;
+        }
+      }
+      if (any) {
+        dilateMaskAlpha(out, w, h, 5);
+        boxBlurMaskAlpha(out, w, h, 2);
+        return out;
+      }
+      return buildFaceFallbackPersonMask(faces[0], w, h);
+    }
+    return buildFullPersonMaskFromCategories(cat, w, h);
+  }
+
+  const seeds = faces.map((lm, idx) => {
+    const c = faceCentroidPx(lm, w, h);
+    return { faceIndex: idx, px: c.x, py: c.y };
+  });
+  const { labels } = labelPersonByFaces(cat, w, h, seeds);
+  const out = new Uint8ClampedArray(len);
+  let any = false;
+  const pick = Math.max(0, Math.min(faceIndex, faces.length - 1));
+  for (let i = 0; i < len; i++) {
+    if (labels[i] === pick) {
+      out[i] = 255;
+      any = true;
+    }
+  }
+  if (!any && faces[pick]) return buildFaceFallbackPersonMask(faces[pick], w, h);
+  dilateMaskAlpha(out, w, h, 5);
+  boxBlurMaskAlpha(out, w, h, 2);
+  return out;
+}
+
+/**
+ * PNG mask for Comet/OpenAI edits: transparent = edit (remove), opaque = keep.
+ * @param {number} w
+ * @param {number} h
+ * @param {Uint8ClampedArray} personAlpha 255 on person
+ * @param {number} outW
+ * @param {number} outH
+ * @returns {string} base64 PNG without data-URL prefix
+ */
+export function personMaskToPngBase64(w, h, personAlpha, outW, outH) {
+  const full = document.createElement("canvas");
+  full.width = w;
+  full.height = h;
+  const fctx = full.getContext("2d");
+  const id = fctx.createImageData(w, h);
+  const d = id.data;
+  for (let i = 0; i < w * h; i++) {
+    const onPerson = personAlpha[i] > 48;
+    const o = i * 4;
+    d[o] = 255;
+    d[o + 1] = 255;
+    d[o + 2] = 255;
+    d[o + 3] = onPerson ? 0 : 255;
+  }
+  fctx.putImageData(id, 0, 0);
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const octx = out.getContext("2d");
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = "high";
+  octx.drawImage(full, 0, 0, outW, outH);
+  return out.toDataURL("image/png").split(",")[1];
+}
+
+/**
  * @typedef {Object} FaceMaskBundle
  * @property {Uint8ClampedArray} skin
  * @property {HTMLCanvasElement} lip
@@ -286,6 +610,91 @@ function pickBestFace(faces) {
     }
   }
   return best || valid[0];
+}
+
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @returns {Array<{ landmarks: Array<{x:number,y:number,z?:number}>, cx: number, cy: number }>}
+ */
+export function detectAllLandmarks(canvas) {
+  if (!landmarker) return [];
+
+  const collect = (c) => {
+    const res = landmarker.detect(c);
+    const raw = res.faceLandmarks || [];
+    const valid = raw.filter((lm) => lm && lm.length >= 468);
+    const w = c.width;
+    const h = c.height;
+    return valid
+      .map((landmarks) => {
+        const c0 = faceCentroidPx(landmarks, w, h);
+        return { landmarks, cx: c0.x, cy: c0.y };
+      })
+      .sort((a, b) => a.cx - b.cx);
+  };
+
+  let list = collect(canvas);
+  if (list.length) return list;
+
+  const W = canvas.width;
+  const H = canvas.height;
+  if (W < 32 || H < 32) return [];
+
+  const scales = [1.75, 2.25, 1.35, 0.85];
+  for (const sc of scales) {
+    const tw = Math.round(Math.min(1920, Math.max(96, W * sc)));
+    const th = Math.round(Math.min(1920, Math.max(96, H * sc)));
+    if (tw === W && th === H) continue;
+    const mc = document.createElement("canvas");
+    mc.width = tw;
+    mc.height = th;
+    const mx = mc.getContext("2d");
+    mx.drawImage(canvas, 0, 0, tw, th);
+    list = collect(mc);
+    if (list.length) {
+      const sx = W / tw;
+      const sy = H / th;
+      return list.map((f) => ({
+        landmarks: f.landmarks,
+        cx: f.cx * sx,
+        cy: f.cy * sy,
+      }));
+    }
+  }
+  return [];
+}
+
+/**
+ * @param {Array<Array<{x:number,y:number,z?:number}>>} faces
+ * @param {number} w
+ * @param {number} h
+ */
+export function pickLargestFaceIndex(faces, w, h) {
+  if (!faces || !faces.length) return 0;
+  let best = 0;
+  let bestArea = 0;
+  for (let fi = 0; fi < faces.length; fi++) {
+    const lm = faces[fi];
+    let minX = 1;
+    let minY = 1;
+    let maxX = 0;
+    let maxY = 0;
+    let any = false;
+    for (const i of [10, 152, 234, 454, 1, 33, 263]) {
+      if (!lm[i]) continue;
+      any = true;
+      minX = Math.min(minX, lm[i].x);
+      maxX = Math.max(maxX, lm[i].x);
+      minY = Math.min(minY, lm[i].y);
+      maxY = Math.max(maxY, lm[i].y);
+    }
+    const area = any ? (maxX - minX) * (maxY - minY) : 0;
+    if (area > bestArea) {
+      bestArea = area;
+      best = fi;
+    }
+  }
+  return best;
 }
 
 /**

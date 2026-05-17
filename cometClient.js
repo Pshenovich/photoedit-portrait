@@ -3,6 +3,10 @@
  * Запрос идёт на /api/comet-edit — ключ хранится только на сервере (Vercel COMET_API_KEY).
  */
 
+import { buildPersonMaskAlpha, personMaskToPngBase64 } from "./engine.js";
+
+export const COMET_PRESET_REMOVE_PERSON = "remove_person";
+
 const COMET_PRESETS = {
   full_beauty:
     "High-end beauty magazine portrait retouch: natural smooth skin, subtle professional makeup, brighter eyes, slight teeth whitening if visible, soft studio lighting. Preserve identity, face shape, and expression exactly. Photorealistic JPEG.",
@@ -18,6 +22,8 @@ const COMET_PRESETS = {
     "ONLY enhance hair: add natural healthy shine and subtle highlight on hair strands. Do NOT change skin, face, eyes, lips, clothes, or background. Preserve exact hair color and hairstyle. Photorealistic.",
   bg_soft:
     "ONLY soften and blur the background. Keep the entire person (face, hair, body, clothes) perfectly sharp and unchanged. Natural depth-of-field; no relighting on subject. Photorealistic.",
+  [COMET_PRESET_REMOVE_PERSON]:
+    "Remove the person completely from this photo. Fill the transparent masked area with natural background that seamlessly matches the surroundings (sky, wall, floor, foliage, texture). No people, body parts, or silhouettes. Match lighting and perspective. Photorealistic.",
 };
 
 export function getCometPresetKeys() {
@@ -30,7 +36,7 @@ export function getCometPresetPrompt(key) {
 
 /**
  * @param {HTMLCanvasElement} canvas
- * @param {{ prompt: string, model?: string, maxSide?: number }} opts
+ * @param {{ prompt: string, model?: string, maxSide?: number, withPersonMask?: boolean, personFaceIndex?: number, personFaces?: Array<Array<{x:number,y:number,z?:number}>> }} opts
  * @returns {Promise<string>} data URL (image/jpeg) готовый для drawImage
  */
 export async function runCometEdit(canvas, opts) {
@@ -51,6 +57,20 @@ export async function runCometEdit(canvas, opts) {
 
   const imageBase64 = mc.toDataURL("image/jpeg", 0.9).split(",")[1];
 
+  let maskBase64;
+  if (opts.withPersonMask) {
+    const personAlpha = buildPersonMaskAlpha(canvas, {
+      faceIndex: opts.personFaceIndex ?? 0,
+      faces: opts.personFaces,
+    });
+    if (!personAlpha) {
+      throw new Error(
+        "Не удалось выделить человека на фото. Попробуйте другое фото или подождите загрузки моделей."
+      );
+    }
+    maskBase64 = personMaskToPngBase64(canvas.width, canvas.height, personAlpha, tw, th);
+  }
+
   const r = await fetch("/api/comet-edit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -58,6 +78,7 @@ export async function runCometEdit(canvas, opts) {
       prompt,
       model: opts.model || "gpt-image-2",
       imageBase64,
+      maskBase64: maskBase64 || undefined,
       output_format: "jpeg",
     }),
   });
