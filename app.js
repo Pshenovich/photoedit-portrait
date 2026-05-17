@@ -12,13 +12,17 @@ import {
   applyHairShineLocal,
   applyLocalSkinSmooth,
   isMobileUA,
+  needsFilePickerWorkaround,
 } from "./engine.js";
 import { applyFaceAdjust } from "./adjustEngine.js";
 import { applyLightPipeline, applyBackgroundBlur, rotateCanvas90CW, rotateCanvas90CCW } from "./filters.js";
 import { runCometEdit, getCometPresetPrompt, COMET_PRESET_REMOVE_PERSON } from "./cometClient.js";
 import { MAKEUP_PRESETS } from "./makeupEngine.js";
 
-const fileInput = document.getElementById("fileInput");
+const fileInputMount = document.getElementById("fileInputMount");
+const pickPhotoBtn = document.getElementById("pickPhotoBtn");
+/** @type {HTMLInputElement | null} */
+let fileInput = /** @type {HTMLInputElement | null} */ (document.getElementById("fileInput"));
 const canvas = document.getElementById("view");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 const hint = document.getElementById("hint");
@@ -1132,7 +1136,28 @@ let filePickBusy = false;
  * @param {File} file
  * @returns {Promise<ImageBitmap | HTMLImageElement>}
  */
+/**
+ * @param {File} file
+ * @returns {Promise<HTMLImageElement>}
+ */
+function decodePhotoFileViaReader(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("image load failed"));
+      img.src = typeof reader.result === "string" ? reader.result : "";
+    };
+    reader.onerror = () => reject(reader.error || new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function decodePhotoFile(file) {
+  if (needsFilePickerWorkaround()) {
+    return decodePhotoFileViaReader(file);
+  }
   if (typeof createImageBitmap === "function" && !isMobileUA()) {
     try {
       return await createImageBitmap(file, { imageOrientation: "from-image" });
@@ -1184,23 +1209,64 @@ async function loadPhotoFromFile(file, input) {
     setStatus("Не удалось открыть файл. Попробуйте JPEG или PNG.");
   } finally {
     filePickBusy = false;
+    if (needsFilePickerWorkaround()) replaceFileInputElement();
   }
+}
+
+function filePickerDeferMs() {
+  return needsFilePickerWorkaround() ? 120 : 0;
 }
 
 function onFileInputPick(e) {
   const input = /** @type {HTMLInputElement} */ (e.currentTarget);
   const file = input.files && input.files[0];
-  if (!file || filePickBusy) return;
+  if (!file) {
+    filePickBusy = false;
+    return;
+  }
+  if (filePickBusy) return;
   filePickBusy = true;
   const picked = file;
-  // iOS Safari must finish the native picker before async work; defer past the change event.
+  // WebKit (Safari, Yandex iOS): finish native picker before async decode.
   setTimeout(() => {
     void loadPhotoFromFile(picked, input);
-  }, 0);
+  }, filePickerDeferMs());
 }
 
-fileInput.addEventListener("change", onFileInputPick);
-fileInput.addEventListener("input", onFileInputPick);
+function replaceFileInputElement() {
+  if (!fileInputMount || !fileInput) return fileInput;
+  const fresh = /** @type {HTMLInputElement} */ (fileInput.cloneNode(true));
+  fileInput.replaceWith(fresh);
+  fileInput = fresh;
+  fileInput.addEventListener("change", onFileInputPick);
+  return fresh;
+}
+
+function bindPhotoPicker() {
+  if (!fileInput) return;
+  fileInput.addEventListener("change", onFileInputPick);
+  if (!pickPhotoBtn) return;
+  pickPhotoBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (filePickBusy) return;
+    filePickBusy = false;
+    const input = needsFilePickerWorkaround() ? replaceFileInputElement() : fileInput;
+    if (!input) return;
+    input.value = "";
+    input.click();
+    if (needsFilePickerWorkaround()) {
+      const resetBusy = () => {
+        if (filePickBusy && (!fileInput?.files || !fileInput.files.length)) {
+          filePickBusy = false;
+        }
+      };
+      window.addEventListener("focus", resetBusy, { once: true });
+      setTimeout(resetBusy, 800);
+    }
+  });
+}
+
+bindPhotoPicker();
 
 function getIntensity() {
   return Number(intensity.value) / 100;

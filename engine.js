@@ -39,6 +39,15 @@ export function isMobileUA() {
   return /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
 }
 
+/** iOS WebKit, Yandex, in-app browsers — file input needs extra care. */
+export function needsFilePickerWorkaround() {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  if (/YaBrowser|YandexSearch|Yandex\.Search/i.test(ua)) return true;
+  if (/CriOS|FxiOS|EdgiOS|OPiOS|SamsungBrowser/i.test(ua) && /Mobile/i.test(ua)) return true;
+  return false;
+}
+
 export function getLandmarker() {
   return landmarker;
 }
