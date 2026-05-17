@@ -70,36 +70,33 @@ body {
 }
 
 .btn-file {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-/* Off-screen input: Safari / Yandex iOS break on display:none and overlay-in-label */
-.file-input-mount {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-  opacity: 0.001;
-  pointer-events: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.file-input-mount input[type="file"] {
+.btn-file-text {
+  pointer-events: none;
+  position: relative;
+  z-index: 0;
+}
+
+/* iOS Safari / Yandex: прямой тап по input внутри label (не programmatic click) */
+.btn-file input[type="file"] {
   position: absolute;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   margin: 0;
   padding: 0;
+  opacity: 0;
   font-size: 16px;
-  opacity: 0.001;
+  cursor: pointer;
+  z-index: 1;
 }
 
 .stage {

@@ -13,14 +13,13 @@ import {
   applyLocalSkinSmooth,
   isMobileUA,
   needsFilePickerWorkaround,
+  isIosStandalonePWA,
 } from "./engine.js";
 import { applyFaceAdjust } from "./adjustEngine.js";
 import { applyLightPipeline, applyBackgroundBlur, rotateCanvas90CW, rotateCanvas90CCW } from "./filters.js";
 import { runCometEdit, getCometPresetPrompt, COMET_PRESET_REMOVE_PERSON } from "./cometClient.js";
 import { MAKEUP_PRESETS } from "./makeupEngine.js";
 
-const fileInputMount = document.getElementById("fileInputMount");
-const pickPhotoBtn = document.getElementById("pickPhotoBtn");
 /** @type {HTMLInputElement | null} */
 let fileInput = /** @type {HTMLInputElement | null} */ (document.getElementById("fileInput"));
 const canvas = document.getElementById("view");
@@ -1131,11 +1130,9 @@ async function analyzeFace() {
 
 /** @type {boolean} */
 let filePickBusy = false;
+let lastPickKey = "";
+let lastPickAt = 0;
 
-/**
- * @param {File} file
- * @returns {Promise<ImageBitmap | HTMLImageElement>}
- */
 /**
  * @param {File} file
  * @returns {Promise<HTMLImageElement>}
@@ -1213,8 +1210,17 @@ async function loadPhotoFromFile(file, input) {
   }
 }
 
-function filePickerDeferMs() {
-  return needsFilePickerWorkaround() ? 120 : 0;
+function schedulePhotoLoad(file, input) {
+  const run = () => void loadPhotoFromFile(file, input);
+  if (!needsFilePickerWorkaround()) {
+    run();
+    return;
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      setTimeout(run, 0);
+    });
+  });
 }
 
 function onFileInputPick(e) {
@@ -1224,46 +1230,40 @@ function onFileInputPick(e) {
     filePickBusy = false;
     return;
   }
+  const pickKey = `${file.name}:${file.size}:${file.lastModified}`;
+  const now = Date.now();
+  if (pickKey === lastPickKey && now - lastPickAt < 600) return;
   if (filePickBusy) return;
+  lastPickKey = pickKey;
+  lastPickAt = now;
   filePickBusy = true;
-  const picked = file;
-  // WebKit (Safari, Yandex iOS): finish native picker before async decode.
-  setTimeout(() => {
-    void loadPhotoFromFile(picked, input);
-  }, filePickerDeferMs());
+  setStatus("Загружаем фото…");
+  schedulePhotoLoad(file, input);
 }
 
 function replaceFileInputElement() {
-  if (!fileInputMount || !fileInput) return fileInput;
+  const label = document.getElementById("pickPhotoLabel");
+  if (!fileInput || !label) return fileInput;
   const fresh = /** @type {HTMLInputElement} */ (fileInput.cloneNode(true));
   fileInput.replaceWith(fresh);
   fileInput = fresh;
-  fileInput.addEventListener("change", onFileInputPick);
+  bindFileInputListeners(fileInput);
   return fresh;
+}
+
+function bindFileInputListeners(input) {
+  input.addEventListener("change", onFileInputPick);
+  input.addEventListener("input", onFileInputPick);
 }
 
 function bindPhotoPicker() {
   if (!fileInput) return;
-  fileInput.addEventListener("change", onFileInputPick);
-  if (!pickPhotoBtn) return;
-  pickPhotoBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    if (filePickBusy) return;
-    filePickBusy = false;
-    const input = needsFilePickerWorkaround() ? replaceFileInputElement() : fileInput;
-    if (!input) return;
-    input.value = "";
-    input.click();
-    if (needsFilePickerWorkaround()) {
-      const resetBusy = () => {
-        if (filePickBusy && (!fileInput?.files || !fileInput.files.length)) {
-          filePickBusy = false;
-        }
-      };
-      window.addEventListener("focus", resetBusy, { once: true });
-      setTimeout(resetBusy, 800);
-    }
-  });
+  bindFileInputListeners(fileInput);
+  if (isIosStandalonePWA()) {
+    setStatus(
+      "Откройте сайт через Safari (адресная строка), не с иконки на экране — иначе галерея может не открыться."
+    );
+  }
 }
 
 bindPhotoPicker();

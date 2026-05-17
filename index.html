@@ -3,16 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=19" />
+  <link rel="stylesheet" href="styles.css?v=20" />
 </head>
 <body>
   <div class="app">
     <header class="top">
-      <button type="button" class="btn btn-file" id="pickPhotoBtn">Фото</button>
+      <label class="btn btn-file" id="pickPhotoLabel">
+        <input type="file" accept="image/*" id="fileInput" />
+        <span class="btn-file-text">Фото</span>
+      </label>
       <div class="top-actions">
         <button type="button" class="btn" id="undoBtn" disabled title="Отменить">↩</button>
         <button type="button" class="btn" id="saveBtn" disabled title="Скачать">Скачать</button>
@@ -167,9 +169,6 @@
       </section>
     </footer>
   </div>
-  <div class="file-input-mount" id="fileInputMount" aria-hidden="true">
-    <input type="file" accept="image/*" id="fileInput" tabindex="-1" />
-  </div>
-  <script type="module" src="app.js?v=19"></script>
+  <script type="module" src="app.js?v=20"></script>
 </body>
 </html>

@@ -48,6 +48,19 @@ export function needsFilePickerWorkaround() {
   return false;
 }
 
+/** «На экран Домой» на iOS — выбор из медиатеки часто не работает. */
+export function isIosStandalonePWA() {
+  if (typeof window === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  if (!/iPhone|iPad|iPod/i.test(ua)) return false;
+  if (/** @type {{ standalone?: boolean }} */ (navigator).standalone === true) return true;
+  try {
+    return window.matchMedia("(display-mode: standalone)").matches;
+  } catch {
+    return false;
+  }
+}
+
 export function getLandmarker() {
   return landmarker;
 }
