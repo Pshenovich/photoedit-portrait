@@ -35,6 +35,69 @@ export function getCometPresetPrompt(key) {
 }
 
 /**
+ * @param {unknown} j
+ * @param {Response} r
+ */
+function formatCometClientError(j, r) {
+  const o = j && typeof j === "object" ? /** @type {Record<string, unknown>} */ (j) : {};
+  const err = o.error;
+  if (typeof err === "string" && err.trim()) return err.trim();
+  if (err && typeof err === "object") {
+    const e = /** @type {Record<string, unknown>} */ (err);
+    const parts = [];
+    for (const k of ["message", "msg", "detail", "type", "code"]) {
+      const v = e[k];
+      if (typeof v === "string" && v.trim()) parts.push(v.trim());
+    }
+    if (parts.length) return parts.join(" — ");
+  }
+  if (typeof o.message === "string" && o.message.trim()) return o.message.trim();
+  if (typeof o.detail === "string" && o.detail.trim()) return o.detail.trim();
+  if (typeof o.raw === "string" && o.raw.trim()) return o.raw.trim().slice(0, 500);
+  const status = r.status || o.status;
+  try {
+    const s = JSON.stringify(o);
+    if (s && s !== "{}" && s !== "null") return s.slice(0, 500);
+  } catch {
+    /* ignore */
+  }
+  return `Ошибка Comet API${status ? ` (${status})` : ""}. Проверьте ключ и квоту.`;
+}
+
+/**
+ * @param {Record<string, unknown>} body
+ * @returns {Promise<string>}
+ */
+async function requestCometEdit(body) {
+  const r = await fetch("/api/comet-edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(formatCometClientError(j, r));
+  }
+  const b64 = j.b64_json;
+  if (!b64) {
+    throw new Error(formatCometClientError(j, r) || "Пустой ответ от ИИ");
+  }
+  return `data:image/jpeg;base64,${b64}`;
+}
+
+/**
+ * @param {Uint8ClampedArray} personAlpha
+ */
+function countPersonMaskPixels(personAlpha) {
+  let n = 0;
+  for (let i = 0; i < personAlpha.length; i++) {
+    if (personAlpha[i] > 48) n++;
+  }
+  return n;
+}
+
+/**
  * @param {HTMLCanvasElement} canvas
  * @param {{ prompt: string, model?: string, maxSide?: number, withPersonMask?: boolean, personFaceIndex?: number, personFaces?: Array<Array<{x:number,y:number,z?:number}>> }} opts
  * @returns {Promise<string>} data URL (image/jpeg) готовый для drawImage
@@ -43,7 +106,8 @@ export async function runCometEdit(canvas, opts) {
   const prompt = (opts.prompt || "").trim();
   if (!prompt) throw new Error("Пустой промпт");
 
-  const maxSide = opts.maxSide ?? 1152;
+  const withMask = !!opts.withPersonMask;
+  const maxSide = withMask ? (opts.maxSide ?? 1024) : (opts.maxSide ?? 1152);
   const sc = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
   const tw = Math.max(1, Math.round(canvas.width * sc));
   const th = Math.max(1, Math.round(canvas.height * sc));
@@ -55,49 +119,63 @@ export async function runCometEdit(canvas, opts) {
   mx.imageSmoothingQuality = "high";
   mx.drawImage(canvas, 0, 0, tw, th);
 
-  const imageBase64 = mc.toDataURL("image/jpeg", 0.9).split(",")[1];
+  const model = opts.model || "gpt-image-2";
+  const jpegBase64 = mc.toDataURL("image/jpeg", 0.9).split(",")[1];
+  const pngBase64 = mc.toDataURL("image/png").split(",")[1];
 
-  let maskBase64;
-  if (opts.withPersonMask) {
-    const personAlpha = buildPersonMaskAlpha(canvas, {
-      faceIndex: opts.personFaceIndex ?? 0,
-      faces: opts.personFaces,
+  if (!withMask) {
+    return requestCometEdit({
+      prompt,
+      model,
+      imageBase64: jpegBase64,
+      imageFormat: "jpeg",
+      output_format: "jpeg",
     });
-    if (!personAlpha) {
+  }
+
+  const personAlpha = buildPersonMaskAlpha(canvas, {
+    faceIndex: opts.personFaceIndex ?? 0,
+    faces: opts.personFaces,
+  });
+  if (!personAlpha) {
+    throw new Error(
+      "Не удалось выделить человека на фото. Попробуйте другое фото или подождите загрузки моделей."
+    );
+  }
+  if (countPersonMaskPixels(personAlpha) < 80) {
+    throw new Error("Область человека слишком мала. Выберите другое фото или другого человека.");
+  }
+
+  const maskBase64 = personMaskToPngBase64(canvas.width, canvas.height, personAlpha, tw, th);
+  const multi = opts.personFaces && opts.personFaces.length > 1;
+
+  try {
+    return await requestCometEdit({
+      prompt,
+      model,
+      imageBase64: pngBase64,
+      imageFormat: "png",
+      maskBase64,
+      output_format: "jpeg",
+    });
+  } catch (e) {
+    const msg = e && e.message ? String(e.message) : "";
+    if (multi) {
       throw new Error(
-        "Не удалось выделить человека на фото. Попробуйте другое фото или подождите загрузки моделей."
+        msg && msg !== "{}"
+          ? msg
+          : "API не принял маску. На групповом фото попробуйте кадр покрупнее или другое освещение."
       );
     }
-    maskBase64 = personMaskToPngBase64(canvas.width, canvas.height, personAlpha, tw, th);
-  }
-
-  const r = await fetch("/api/comet-edit", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      model: opts.model || "gpt-image-2",
-      imageBase64,
-      maskBase64: maskBase64 || undefined,
+    console.warn("masked remove failed, retry without mask", e);
+    return requestCometEdit({
+      prompt:
+        prompt +
+        " Remove the entire person from the image. Fill with matching background. No people left.",
+      model,
+      imageBase64: jpegBase64,
+      imageFormat: "jpeg",
       output_format: "jpeg",
-    }),
-  });
-
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const raw = j.error ?? j.message ?? j;
-    let msg;
-    if (typeof raw === "string") msg = raw;
-    else if (raw && typeof raw === "object" && typeof raw.message === "string") msg = raw.message;
-    else
-      try {
-        msg = JSON.stringify(raw).slice(0, 500);
-      } catch {
-        msg = r.statusText;
-      }
-    throw new Error(msg || "Comet API error");
+    });
   }
-  const b64 = j.b64_json;
-  if (!b64) throw new Error("Пустой ответ от ИИ");
-  return `data:image/jpeg;base64,${b64}`;
 }

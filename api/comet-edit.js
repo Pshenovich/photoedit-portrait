@@ -14,16 +14,24 @@ function sendJson(res, code, obj) {
 /** Comet / OpenAI часто отдают error как объект — всегда отдаём клиенту строку. */
 function stringifyCometError(payload) {
   if (payload == null) return "Неизвестная ошибка CometAPI";
-  if (typeof payload === "string") return payload;
+  if (typeof payload === "string") return payload.trim() || "Ошибка CometAPI";
   if (typeof payload === "object") {
-    const e = payload.error ?? payload.message ?? payload;
-    if (typeof e === "string") return e;
+    const e = payload.error;
+    if (typeof e === "string" && e.trim()) return e.trim();
     if (e && typeof e === "object") {
-      const m = e.message ?? e.msg ?? e.detail;
-      if (typeof m === "string") return m;
+      const parts = [];
+      for (const k of ["message", "msg", "detail", "type", "code"]) {
+        const v = e[k];
+        if (typeof v === "string" && v.trim()) parts.push(v.trim());
+      }
+      if (parts.length) return parts.join(" — ");
     }
+    const m = payload.message;
+    if (typeof m === "string" && m.trim()) return m.trim();
     try {
-      return JSON.stringify(payload).slice(0, 800);
+      const s = JSON.stringify(payload);
+      if (s === "{}") return "CometAPI вернул ошибку без описания";
+      return s.slice(0, 800);
     } catch {
       return "Ошибка CometAPI";
     }
@@ -90,6 +98,7 @@ module.exports = async (req, res) => {
   const prompt = typeof body.prompt === "string" ? body.prompt : "";
   const imageBase64 = typeof body.imageBase64 === "string" ? body.imageBase64 : "";
   const maskBase64 = typeof body.maskBase64 === "string" ? body.maskBase64 : "";
+  const imageFormat = body.imageFormat === "png" ? "png" : "jpeg";
   const model = typeof body.model === "string" ? body.model : "gpt-image-2";
   const output_format = body.output_format || "jpeg";
 
@@ -110,15 +119,17 @@ module.exports = async (req, res) => {
     return;
   }
 
+  const imageMime = imageFormat === "png" ? "image/png" : "image/jpeg";
+  const imageName = imageFormat === "png" ? "photo.png" : "photo.jpg";
   const form = new FormData();
-  const jpegPart =
+  const imagePart =
     typeof File !== "undefined"
-      ? new File([buf], "photo.jpg", { type: "image/jpeg" })
-      : new Blob([buf], { type: "image/jpeg" });
-  if (typeof File !== "undefined" && jpegPart instanceof File) {
-    form.append("image", jpegPart);
+      ? new File([buf], imageName, { type: imageMime })
+      : new Blob([buf], { type: imageMime });
+  if (typeof File !== "undefined" && imagePart instanceof File) {
+    form.append("image", imagePart);
   } else {
-    form.append("image", jpegPart, "photo.jpg");
+    form.append("image", imagePart, imageName);
   }
   form.append("prompt", prompt.slice(0, 4000));
   form.append("model", model);
@@ -171,6 +182,7 @@ module.exports = async (req, res) => {
       sendJson(res, upstream.status >= 400 ? upstream.status : 502, {
         error: errText + hintForCometMessage(errText),
         status: upstream.status,
+        upstream: text.slice(0, 400),
       });
       return;
     }
@@ -180,6 +192,7 @@ module.exports = async (req, res) => {
       sendJson(res, 502, {
         error: errText + hintForCometMessage(errText),
         status: upstream.status,
+        upstream: text.slice(0, 400),
       });
       return;
     }

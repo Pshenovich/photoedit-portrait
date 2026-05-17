@@ -512,8 +512,7 @@ export function personMaskToPngBase64(w, h, personAlpha, outW, outH) {
   out.width = outW;
   out.height = outH;
   const octx = out.getContext("2d");
-  octx.imageSmoothingEnabled = true;
-  octx.imageSmoothingQuality = "high";
+  octx.imageSmoothingEnabled = false;
   octx.drawImage(full, 0, 0, outW, outH);
   return out.toDataURL("image/png").split(",")[1];
 }
