@@ -1,64 +1,18 @@
 /**
- * Vercel Serverless: прокси к CometAPI POST https://api.cometapi.com/v1/images/edits
- * Переменная окружения: COMET_API_KEY
+ * POST /api/comet-edit — ИИ-редактирование фото.
+ * Сначала OpenRouter (OPENROUTER_API_KEY), при ошибке — CometAPI (COMET_API_KEY).
  */
 
-const { normalizeApiKey } = require("./_cometKey");
+const {
+  readJsonBody,
+  parseEditBody,
+  runImageEdit,
+} = require("./_upstreamImageEdit");
 
 function sendJson(res, code, obj) {
   res.statusCode = code;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.end(JSON.stringify(obj));
-}
-
-/** Comet / OpenAI часто отдают error как объект — всегда отдаём клиенту строку. */
-function stringifyCometError(payload) {
-  if (payload == null) return "Неизвестная ошибка CometAPI";
-  if (typeof payload === "string") return payload.trim() || "Ошибка CometAPI";
-  if (typeof payload === "object") {
-    const e = payload.error;
-    if (typeof e === "string" && e.trim()) return e.trim();
-    if (e && typeof e === "object") {
-      const parts = [];
-      for (const k of ["message", "msg", "detail", "type", "code"]) {
-        const v = e[k];
-        if (typeof v === "string" && v.trim()) parts.push(v.trim());
-      }
-      if (parts.length) return parts.join(" — ");
-    }
-    const m = payload.message;
-    if (typeof m === "string" && m.trim()) return m.trim();
-    try {
-      const s = JSON.stringify(payload);
-      if (s === "{}") return "CometAPI вернул ошибку без описания";
-      return s.slice(0, 800);
-    } catch {
-      return "Ошибка CometAPI";
-    }
-  }
-  return String(payload);
-}
-
-async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-function hintForCometMessage(msg) {
-  const s = typeof msg === "string" ? msg : "";
-  if (/invalid token/i.test(s)) {
-    return (
-      " Ключ: только строка из кабинета CometAPI (не ключ OpenAI). В Vercel в значении переменной не пишите слово Bearer — только сам ключ. В кабинете токену нужна безлимитная квота."
-    );
-  }
-  return "";
 }
 
 module.exports = async (req, res) => {
@@ -76,17 +30,6 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const key = normalizeApiKey(
-    process.env.COMET_API_KEY || process.env.COMETAPI_KEY || ""
-  );
-  if (!key) {
-    sendJson(res, 501, {
-      error:
-        "COMET_API_KEY не задан. В Vercel: Settings → Environment Variables → COMET_API_KEY (или COMETAPI_KEY) = ключ из кабинета CometAPI, без префикса Bearer.",
-    });
-    return;
-  }
-
   let body;
   try {
     body = await readJsonBody(req);
@@ -95,136 +38,24 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const prompt = typeof body.prompt === "string" ? body.prompt : "";
-  const imageBase64 = typeof body.imageBase64 === "string" ? body.imageBase64 : "";
-  const maskBase64 = typeof body.maskBase64 === "string" ? body.maskBase64 : "";
-  const imageFormat = body.imageFormat === "png" ? "png" : "jpeg";
-  const model = typeof body.model === "string" ? body.model : "gpt-image-2";
-  const output_format = body.output_format || "jpeg";
-
-  if (!prompt || !imageBase64) {
+  const p = parseEditBody(body);
+  if (!p.prompt || !p.imageBase64) {
     sendJson(res, 400, { error: "Нужны поля prompt и imageBase64" });
     return;
   }
 
-  let buf;
   try {
-    buf = Buffer.from(imageBase64, "base64");
-  } catch {
-    sendJson(res, 400, { error: "Некорректный base64" });
-    return;
-  }
-  if (buf.length < 100 || buf.length > 12 * 1024 * 1024) {
-    sendJson(res, 400, { error: "Размер изображения вне допустимого диапазона" });
-    return;
-  }
-
-  const imageMime = imageFormat === "png" ? "image/png" : "image/jpeg";
-  const imageName = imageFormat === "png" ? "photo.png" : "photo.jpg";
-  const form = new FormData();
-  const imagePart =
-    typeof File !== "undefined"
-      ? new File([buf], imageName, { type: imageMime })
-      : new Blob([buf], { type: imageMime });
-  if (typeof File !== "undefined" && imagePart instanceof File) {
-    form.append("image", imagePart);
-  } else {
-    form.append("image", imagePart, imageName);
-  }
-  form.append("prompt", prompt.slice(0, 4000));
-  form.append("model", model);
-  form.append("output_format", output_format);
-  form.append("n", "1");
-
-  if (maskBase64) {
-    let maskBuf;
-    try {
-      maskBuf = Buffer.from(maskBase64, "base64");
-    } catch {
-      sendJson(res, 400, { error: "Некорректный base64 маски" });
+    const result = await runImageEdit(p);
+    if (result.ok) {
+      sendJson(res, 200, { b64_json: result.b64_json, provider: result.provider });
       return;
     }
-    if (maskBuf.length < 50 || maskBuf.length > 4 * 1024 * 1024) {
-      sendJson(res, 400, { error: "Размер маски вне допустимого диапазона" });
-      return;
-    }
-    const maskPart =
-      typeof File !== "undefined"
-        ? new File([maskBuf], "mask.png", { type: "image/png" })
-        : new Blob([maskBuf], { type: "image/png" });
-    if (typeof File !== "undefined" && maskPart instanceof File) {
-      form.append("mask", maskPart);
-    } else {
-      form.append("mask", maskPart, "mask.png");
-    }
-  }
-
-  try {
-    const upstream = await fetch("https://api.cometapi.com/v1/images/edits", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-      },
-      body: form,
+    sendJson(res, 502, {
+      error: result.error,
+      tried: result.tried,
     });
-
-    const text = await upstream.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      sendJson(res, 502, { error: "Comet вернул не-JSON", raw: text.slice(0, 500) });
-      return;
-    }
-
-    if (!upstream.ok) {
-      const errText = stringifyCometError(json);
-      sendJson(res, upstream.status >= 400 ? upstream.status : 502, {
-        error: errText + hintForCometMessage(errText),
-        status: upstream.status,
-        upstream: text.slice(0, 400),
-      });
-      return;
-    }
-
-    if (json.error) {
-      const errText = stringifyCometError(json);
-      sendJson(res, 502, {
-        error: errText + hintForCometMessage(errText),
-        status: upstream.status,
-        upstream: text.slice(0, 400),
-      });
-      return;
-    }
-
-    const row = json.data && json.data[0];
-    let b64Out = row && row.b64_json;
-    if (!b64Out && row && row.url && typeof row.url === "string") {
-      try {
-        const imgRes = await fetch(row.url);
-        if (!imgRes.ok) {
-          sendJson(res, 502, {
-            error: `Comet вернул url, но скачивание не удалось: ${imgRes.status}`,
-          });
-          return;
-        }
-        const ab = await imgRes.arrayBuffer();
-        b64Out = Buffer.from(ab).toString("base64");
-      } catch (fe) {
-        sendJson(res, 502, { error: `url из ответа: ${fe.message || fe}` });
-        return;
-      }
-    }
-    if (!b64Out) {
-      sendJson(res, 502, {
-        error: `Нет изображения в ответе: ${stringifyCometError(json)}`,
-      });
-      return;
-    }
-
-    sendJson(res, 200, { b64_json: b64Out });
   } catch (e) {
     console.error(e);
-    sendJson(res, 500, { error: e.message || "Upstream fetch failed" });
+    sendJson(res, 500, { error: e.message || "Upstream failed" });
   }
 };

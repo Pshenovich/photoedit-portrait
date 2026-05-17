@@ -42,12 +42,17 @@ NPM_CONFIG_CACHE=/tmp/npm-cache-photoedit npx vercel@latest deploy --prod --yes
 python3 -m http.server 8080
 ```
 
-Для **ИИ (CometAPI)** нужен деплой на Vercel (или `vercel dev`), а не чистая статика: функция `api/comet-edit.js` проксирует запрос на `https://api.cometapi.com/v1/images/edits`.
+Для **ИИ-ретуши** нужен деплой на Vercel (или `vercel dev`), а не чистая статика: `api/comet-edit.js` вызывает **OpenRouter**, при ошибке — **CometAPI**.
 
-1. В проекте Vercel: **Settings → Environment Variables** → `COMET_API_KEY` = ваш ключ с [CometAPI](https://apidoc.cometapi.com).
-2. Локально: `vercel dev` в корне репозитория с тем же ключом в `.env` или в окружении.
+1. **Vercel → Settings → Environment Variables:**
+   - `OPENROUTER_API_KEY` — основной ключ с [OpenRouter](https://openrouter.ai/keys)
+   - `COMET_API_KEY` — запасной с [CometAPI](https://apidoc.cometapi.com) (опционально, но рекомендуется для масок / удаления человека)
+   - `OPENROUTER_IMAGE_MODEL` — необязательно (по умолчанию `google/gemini-2.5-flash-image`)
+2. Локально: `vercel dev` и те же переменные в `.env`.
 
-Без ключа кнопка «ИИ улучшить» вернёт сообщение об отсутствии `COMET_API_KEY`.
+Диагностика: `GET /api/comet-env-check` на деплое Vercel.
+
+Без ключей пресеты «ИИ тюн» вернут ошибку о настройке API.
 
 ## Заметки
 

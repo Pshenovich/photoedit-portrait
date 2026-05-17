@@ -1,9 +1,12 @@
 /**
- * GET /api/comet-env-check — диагностика без раскрытия ключа.
- * Проверяет, подхватилась ли переменная на Vercel и принимает ли её Comet (GET /v1/models).
+ * GET /api/comet-env-check — диагностика ключей (без раскрытия секретов).
  */
 
-const { normalizeApiKey } = require("./_cometKey");
+const {
+  getOpenRouterKey,
+  getCometKey,
+  stringifyUpstreamError,
+} = require("./_upstreamImageEdit");
 
 function sendJson(res, code, obj) {
   res.statusCode = code;
@@ -13,46 +16,85 @@ function sendJson(res, code, obj) {
 
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
     res.end();
     return;
   }
   if (req.method !== "GET") {
-    sendJson(res, 405, { error: "Только GET" });
+    sendJson(res, 405, { error: "Method not allowed" });
     return;
   }
 
-  const rawPresent = !!(process.env.COMET_API_KEY || process.env.COMETAPI_KEY);
-  const key = normalizeApiKey(
-    process.env.COMET_API_KEY || process.env.COMETAPI_KEY || ""
-  );
+  const orKey = getOpenRouterKey();
+  const cometKey = getCometKey();
 
-  let modelsProbe = null;
-  if (key.length > 0) {
+  /** @type {Record<string, unknown>} */
+  let openrouterModels = { skipped: true };
+  if (orKey) {
     try {
-      const r = await fetch("https://api.cometapi.com/v1/models?limit=1", {
-        method: "GET",
-        headers: { Authorization: `Bearer ${key}` },
+      const r = await fetch("https://openrouter.ai/api/v1/models?limit=1", {
+        headers: { Authorization: `Bearer ${orKey}` },
       });
-      modelsProbe = {
+      const text = await r.text();
+      let json = {};
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = { raw: text.slice(0, 200) };
+      }
+      openrouterModels = {
         status: r.status,
         ok: r.ok,
+        error: r.ok ? null : stringifyUpstreamError(json, "OpenRouter"),
       };
     } catch (e) {
-      modelsProbe = { error: e.message || String(e) };
+      openrouterModels = { status: 0, error: e.message || String(e) };
+    }
+  }
+
+  /** @type {Record<string, unknown>} */
+  let cometModels = { skipped: true };
+  if (cometKey) {
+    try {
+      const r = await fetch("https://api.cometapi.com/v1/models?limit=1", {
+        headers: { Authorization: `Bearer ${cometKey}` },
+      });
+      const text = await r.text();
+      let json = {};
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = { raw: text.slice(0, 200) };
+      }
+      cometModels = {
+        status: r.status,
+        ok: r.ok,
+        error: r.ok ? null : stringifyUpstreamError(json, "CometAPI"),
+      };
+    } catch (e) {
+      cometModels = { status: 0, error: e.message || String(e) };
     }
   }
 
   sendJson(res, 200, {
-    vercel_ui:
-      "В Environment Variables при нажатии «Редактировать» поле значения пустое — это нормально: Vercel не показывает сохранённые секреты повторно. Ключ всё равно хранится, пока вы его не перезапишете.",
-    env_var_name_used: process.env.COMET_API_KEY ? "COMET_API_KEY" : process.env.COMETAPI_KEY ? "COMETAPI_KEY" : null,
-    raw_env_nonempty: rawPresent,
-    normalized_key_length: key.length,
-    comet_models_GET: modelsProbe,
-    if_invalid_token:
-      "Если comet_models_GET.status 401 — ключ CometAPI неверный, отозван или не тот. Создайте новый токен в кабинете Comet, вставьте только строку ключа (без Bearer), сохраните и сделайте Redeploy.",
+    primary: "openrouter",
+    fallback: "comet",
+    OPENROUTER_API_KEY: {
+      present: !!orKey,
+      length: orKey ? orKey.length : 0,
+    },
+    COMET_API_KEY: {
+      present: !!cometKey,
+      length: cometKey ? cometKey.length : 0,
+    },
+    OPENROUTER_IMAGE_MODEL:
+      process.env.OPENROUTER_IMAGE_MODEL ||
+      process.env.OPENROUTER_MODEL ||
+      "google/gemini-2.5-flash-image (default)",
+    openrouter_models_GET: openrouterModels,
+    comet_models_GET: cometModels,
+    hint:
+      "Сначала используется OpenRouter (OPENROUTER_API_KEY), при ошибке — Comet (COMET_API_KEY). В Vercel: Settings → Environment Variables, без префикса Bearer, затем Redeploy.",
   });
 };

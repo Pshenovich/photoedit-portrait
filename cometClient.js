@@ -1,6 +1,6 @@
 /**
- * ИИ-ретушь через CometAPI (OpenAI-совместимый /v1/images/edits).
- * Запрос идёт на /api/comet-edit — ключ хранится только на сервере (Vercel COMET_API_KEY).
+ * ИИ-ретушь: /api/comet-edit → OpenRouter (основной), CometAPI (fallback).
+ * Ключи только на сервере: OPENROUTER_API_KEY, COMET_API_KEY.
  */
 
 import { buildPersonMaskAlpha, personMaskToPngBase64 } from "./engine.js";
