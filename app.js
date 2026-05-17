@@ -957,30 +957,44 @@ async function analyzeFace() {
   }
 }
 
-fileInput.addEventListener("change", async (e) => {
-  const f = e.target.files && e.target.files[0];
-  if (!f) return;
+/** @type {boolean} */
+let filePickBusy = false;
+
+/**
+ * @param {File} file
+ * @returns {Promise<ImageBitmap | HTMLImageElement>}
+ */
+async function decodePhotoFile(file) {
+  if (typeof createImageBitmap === "function" && !isMobileUA()) {
+    try {
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch (_) {
+      /* fall through */
+    }
+  }
+  const url = URL.createObjectURL(file);
   try {
-    let src = null;
-    if (typeof createImageBitmap === "function") {
-      try {
-        src = await createImageBitmap(f, { imageOrientation: "from-image" });
-      } catch (_) {
-        src = null;
-      }
-    }
-    if (!src) {
-      const url = URL.createObjectURL(f);
-      const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = url;
-      });
-      if (img.decode) await img.decode();
-      URL.revokeObjectURL(url);
-      src = img;
-    }
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = () => resolve(undefined);
+      img.onerror = () => reject(new Error("image load failed"));
+      img.src = url;
+    });
+    if (img.decode) await img.decode();
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * @param {File} file
+ * @param {HTMLInputElement} input
+ */
+async function loadPhotoFromFile(file, input) {
+  setStatus("Загружаем фото…");
+  try {
+    const src = await decodePhotoFile(file);
     if (src instanceof ImageBitmap) {
       sourceImg = null;
     } else {
@@ -994,13 +1008,31 @@ fileInput.addEventListener("change", async (e) => {
         /* ignore */
       }
     }
+    input.value = "";
     await analyzeFace();
   } catch (err) {
     console.warn(err);
+    input.value = "";
     setStatus("Не удалось открыть файл. Попробуйте JPEG или PNG.");
+  } finally {
+    filePickBusy = false;
   }
-  e.target.value = "";
-});
+}
+
+function onFileInputPick(e) {
+  const input = /** @type {HTMLInputElement} */ (e.currentTarget);
+  const file = input.files && input.files[0];
+  if (!file || filePickBusy) return;
+  filePickBusy = true;
+  const picked = file;
+  // iOS Safari must finish the native picker before async work; defer past the change event.
+  setTimeout(() => {
+    void loadPhotoFromFile(picked, input);
+  }, 0);
+}
+
+fileInput.addEventListener("change", onFileInputPick);
+fileInput.addEventListener("input", onFileInputPick);
 
 function getIntensity() {
   return Number(intensity.value) / 100;

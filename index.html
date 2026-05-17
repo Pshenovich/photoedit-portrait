@@ -7,14 +7,19 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f0f12" />
   <title>PhotoEdit Pro — портрет</title>
-  <link rel="stylesheet" href="styles.css?v=16" />
+  <link rel="stylesheet" href="styles.css?v=17" />
 </head>
 <body>
   <div class="app">
     <header class="top">
-      <label class="btn btn-file" tabindex="0">
-        Фото
-        <input type="file" accept="image/*" id="fileInput" hidden />
+      <label class="btn btn-file">
+        <span class="btn-file-label">Фото</span>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*"
+          id="fileInput"
+          class="file-input-overlay"
+        />
       </label>
       <div class="top-actions">
         <button type="button" class="btn" id="undoBtn" disabled title="Отменить">↩</button>
